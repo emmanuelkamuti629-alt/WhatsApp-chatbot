@@ -12,7 +12,7 @@ const {
   initAuthCreds,
   BufferJSON,
   proto,
-  fetchLatestWaWebVersion // <-- ADDED: Fixes version mismatch errors
+  fetchLatestWaWebVersion // CRITICAL: Fixes silent pairing rejection
 } = require('@whiskeysockets/baileys');
 
 // =====================================================
@@ -325,14 +325,14 @@ async function startWhatsApp() {
     whatsappState = 'connecting';
     logInfo('WHATSAPP_START', 'Starting WhatsApp socket.');
 
-    // FETCH LATEST VERSION TO PREVENT PAIRING ERRORS
+    // CRITICAL FIX: Fetch the absolute latest version to avoid pairing rejection
     const { version, isLatest } = await fetchLatestWaWebVersion({});
     logInfo('WA_VERSION', `Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
     const { state, saveCreds } = await useMongoDBAuthState();
 
     const socket = makeWASocket({
-      version, // Passed here
+      version, 
       auth: state,
       logger,
       printQRInTerminal: false,
@@ -364,7 +364,7 @@ async function startWhatsApp() {
         qrCodeData = qr;
         whatsappConnected = false;
         whatsappState = 'waiting_for_scan';
-        logInfo('WHATSAPP_QR', 'New QR code generated.');
+        logInfo('WHATSAPP_QR', 'New QR code generated. Pairing code can now be requested.');
       }
 
       if (connection === 'connecting') {
@@ -376,6 +376,7 @@ async function startWhatsApp() {
         whatsappConnected = true;
         whatsappState = 'connected';
         qrCodeData = null;
+        pairingInProgress = false;
         logInfo('WHATSAPP_CONNECTED', 'WhatsApp connected successfully.');
       }
 
@@ -383,6 +384,7 @@ async function startWhatsApp() {
         whatsappConnected = false;
         whatsappState = 'disconnected';
         qrCodeData = null;
+        pairingInProgress = false;
 
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         logWarn('WHATSAPP_CLOSED', 'WhatsApp connection closed.', { statusCode });
@@ -692,7 +694,12 @@ app.post('/request-pairing', async (req, res) => {
   }
 
   if (!whatsappSocket) {
-    return res.status(503).json({ success: false, error: 'WhatsApp socket is not ready. Wait a few seconds and try again.' });
+    return res.status(503).json({ success: false, error: 'WhatsApp socket is not ready. Wait for the QR code to appear and try again.' });
+  }
+
+  // CRITICAL FIX: Ensure the QR has actually been emitted before requesting a code
+  if (!qrCodeData) {
+     return res.status(400).json({ success: false, error: 'Please wait for the QR code to appear on the screen, then try requesting the pairing code again.' });
   }
 
   pairingInProgress = true;
@@ -700,13 +707,8 @@ app.post('/request-pairing', async (req, res) => {
   try {
     const socket = whatsappSocket;
 
-    // CRITICAL FIX: Do not blindly sleep. Ensure socket is actively looking for QR code
-    // If the socket is closed or we are already connected, this will fail.
-    if (!socket.ws || socket.ws.readyState !== 1) { // 1 = OPEN
-      throw new Error('WhatsApp socket is not fully connected yet. Please wait for the QR code to appear and try again.');
-    }
-
     logInfo('PAIRING_REQUEST', 'Generating phone number pairing code.');
+    // The code must be requested only after the socket is ready (qr event fired)
     const code = await socket.requestPairingCode(phone);
     logInfo('PAIRING_CODE_GENERATED', 'WhatsApp pairing code generated successfully.');
 
