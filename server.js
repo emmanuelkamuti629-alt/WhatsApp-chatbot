@@ -18,13 +18,12 @@ const {
   BufferJSON,
   initAuthCreds,
   proto,
-  makeCacheableSignalKeyStore,
-  fetchLatestBaileysVersion
+  makeCacheableSignalKeyStore
 } = baileys;
 
-// =====================================================
+// ======================================================
 // 1. CONFIGURATION
-// =====================================================
+// ======================================================
 
 const config = {
   port: process.env.PORT || 3000,
@@ -34,33 +33,40 @@ const config = {
 
   geminiKey: process.env.GEMINI_API_KEY,
 
-  // Use GEMINI_MODEL, not the old OPENAI_MODEL.
-  model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+  geminiModel:
+    process.env.GEMINI_MODEL || 'gemini-2.5-flash',
 
-  maxTokens: Number(process.env.OPENAI_MAX_TOKENS || 1000),
+  maxTokens: Number(
+    process.env.OPENAI_MAX_TOKENS || 1000
+  ),
 
-  temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
+  temperature: Number(
+    process.env.OPENAI_TEMPERATURE || 0.7
+  ),
 
-  botName: process.env.BOT_NAME || 'Smart Assistant',
+  botName:
+    process.env.BOT_NAME || 'Smart Assistant',
 
   personality:
     process.env.BOT_PERSONALITY ||
-    'You are a helpful, friendly, intelligent and accurate WhatsApp assistant. Answer naturally, clearly and politely.',
+    'You are a helpful, friendly, intelligent and accurate assistant. Answer naturally and clearly.',
 
-  maxHistory: Number(process.env.MAX_HISTORY_MESSAGES || 10)
+  maxHistory: Number(
+    process.env.MAX_HISTORY_MESSAGES || 10
+  )
 };
 
-// =====================================================
+// ======================================================
 // 2. LOGGER
-// =====================================================
+// ======================================================
 
 const logger = pino({
-  level: process.env.LOG_LEVEL || 'info'
+  level: process.env.LOG_LEVEL || 'warn'
 });
 
-// =====================================================
-// 3. GEMINI AI CONFIGURATION
-// =====================================================
+// ======================================================
+// 3. GEMINI AI
+// ======================================================
 
 const ai = new OpenAI({
   apiKey: config.geminiKey || 'missing-key',
@@ -78,16 +84,17 @@ const historyCache = new NodeCache({
   checkperiod: 600
 });
 
-// =====================================================
+// ======================================================
 // 4. MONGODB
-// =====================================================
+// ======================================================
 
 const mongoClient = new MongoClient(
   config.mongoUri || 'mongodb://127.0.0.1:27017',
   {
-    serverSelectionTimeoutMS: 15000,
-    connectTimeoutMS: 15000,
-    maxPoolSize: 10
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    maxPoolSize: 10,
+    retryWrites: true
   }
 );
 
@@ -96,19 +103,20 @@ let authCollection;
 
 let mongoReady = false;
 
-// =====================================================
-// 5. GLOBAL WHATSAPP VARIABLES
-// =====================================================
+// ======================================================
+// 5. WHATSAPP STATE
+// ======================================================
 
 let sock = null;
 let authState = null;
 
 let isConnected = false;
 let isConnecting = false;
+
+let pairingCode = null;
 let pairingReady = false;
 let pairingInProgress = false;
 
-let pairingCode = null;
 let latestQRDataUrl = null;
 
 let reconnectTimer = null;
@@ -116,20 +124,39 @@ let reconnectAttempts = 0;
 
 let lastConnectionError = null;
 let lastConnectedAt = null;
+let connectionStatus = 'starting';
 
-let serverStarted = false;
+let socketGeneration = 0;
 
-// =====================================================
-// 6. CONNECT TO MONGODB
-// =====================================================
+// ======================================================
+// 6. EXPRESS
+// ======================================================
+
+const app = express();
+
+app.use(express.json({
+  limit: '1mb'
+}));
+
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// ======================================================
+// 7. MONGODB CONNECTION
+// ======================================================
 
 async function connectMongo() {
 
+  if (mongoReady) return;
+
   if (!config.mongoUri) {
-    throw new Error('MONGODB_URI is missing in Render.');
+    throw new Error('MONGODB_URI is missing.');
   }
 
-  console.log('Connecting to MongoDB Atlas...');
+  console.log('Connecting to MongoDB...');
 
   await mongoClient.connect();
 
@@ -137,81 +164,67 @@ async function connectMongo() {
 
   authCollection = db.collection('baileys_auth');
 
-  await authCollection.createIndex({
-    updatedAt: 1
-  });
-
   mongoReady = true;
 
   console.log('MONGODB CONNECTED SUCCESSFULLY');
 
 }
 
-// =====================================================
-// 7. MONGODB AUTHENTICATION STORAGE
-// =====================================================
+// ======================================================
+// 8. MONGODB AUTHENTICATION STORAGE
+// ======================================================
 
-async function useMongoAuthState(collection) {
+async function createMongoAuthState(collection) {
 
-  // Read saved data.
+  // Read saved information.
 
   async function readData(id) {
 
-    const doc = await collection.findOne({
+    const document = await collection.findOne({
       _id: id
     });
 
-    if (!doc || !doc.value) {
+    if (!document || !document.value) {
       return null;
     }
 
     return JSON.parse(
-      doc.value,
+      document.value,
       BufferJSON.reviver
     );
 
   }
 
-  // Write saved data.
+  // Write saved information.
 
   async function writeData(id, value) {
 
-    const serialized = JSON.stringify(
-      value,
-      BufferJSON.replacer
-    );
-
     await collection.updateOne(
-      { _id: id },
-
+      {
+        _id: id
+      },
       {
         $set: {
-          value: serialized,
+          value: JSON.stringify(
+            value,
+            BufferJSON.replacer
+          ),
           updatedAt: new Date()
         }
       },
-
-      { upsert: true }
+      {
+        upsert: true
+      }
     );
 
   }
 
-  // Delete saved data.
-
-  async function removeData(id) {
-
-    await collection.deleteOne({
-      _id: id
-    });
-
-  }
-
-  // Restore WhatsApp credentials.
+  // Load WhatsApp credentials.
 
   const creds =
     (await readData('creds')) || initAuthCreds();
 
-  // Signal encryption key storage.
+  // Encryption keys.
 
   const keys = {
 
@@ -228,9 +241,9 @@ async function useMongoAuthState(collection) {
       }).toArray();
 
       const stored = new Map(
-        documents.map(doc => [
-          doc._id,
-          doc.value
+        documents.map(document => [
+          document._id,
+          document.value
         ])
       );
 
@@ -278,24 +291,19 @@ async function useMongoAuthState(collection) {
 
             operations.push({
               updateOne: {
-
                 filter: {
                   _id: key
                 },
-
                 update: {
                   $set: {
                     value: JSON.stringify(
                       value,
                       BufferJSON.replacer
                     ),
-
                     updatedAt: new Date()
                   }
                 },
-
                 upsert: true
-
               }
             });
 
@@ -319,7 +327,9 @@ async function useMongoAuthState(collection) {
 
         await collection.bulkWrite(
           operations,
-          { ordered: false }
+          {
+            ordered: false
+          }
         );
 
       }
@@ -328,11 +338,17 @@ async function useMongoAuthState(collection) {
 
   };
 
-  // Save updated credentials.
-
   async function saveCreds() {
 
     await writeData('creds', creds);
+
+  }
+
+  // Save initial credentials if this is a new session.
+
+  if (!(await collection.findOne({ _id: 'creds' }))) {
+
+    await saveCreds();
 
   }
 
@@ -341,17 +357,107 @@ async function useMongoAuthState(collection) {
       creds,
       keys
     },
-
     saveCreds
   };
 
 }
 
-// =====================================================
-// 8. PHONE NUMBER VALIDATION
-// =====================================================
+// ======================================================
+// 9. GEMINI RESPONSE GENERATOR
+// ======================================================
 
-function normalizePhoneNumber(input) {
+async function generateReply(chatId, userMessage) {
+
+  if (!userMessage) return null;
+
+  if (!config.geminiKey) {
+
+    console.error('GEMINI API KEY MISSING');
+
+    return "⚠️ I'm having trouble thinking right now. Please try again.";
+
+  }
+
+  let history = historyCache.get(chatId) || [];
+
+  history.push({
+    role: 'user',
+    content: userMessage
+  });
+
+  const messages = [
+    {
+      role: 'system',
+      content: config.personality
+    },
+    ...history
+  ];
+
+  try {
+
+    console.log('GEMINI REQUEST:', config.geminiModel);
+
+    const response = await ai.chat.completions.create({
+
+      model: config.geminiModel,
+
+      messages,
+
+      max_tokens: config.maxTokens,
+
+      temperature: config.temperature
+
+    });
+
+    const reply =
+      response.choices?.[0]?.message?.content;
+
+    if (!reply || typeof reply !== 'string') {
+
+      throw new Error('Empty Gemini response');
+
+    }
+
+    history.push({
+      role: 'assistant',
+      content: reply
+    });
+
+    historyCache.set(
+      chatId,
+      history.slice(-config.maxHistory * 2)
+    );
+
+    console.log('GEMINI REPLY GENERATED');
+
+    return reply;
+
+  } catch (error) {
+
+    console.error('GEMINI ERROR:', {
+      message: error.message,
+      status: error.status,
+      model: config.geminiModel
+    });
+
+    history.pop();
+
+    historyCache.set(
+      chatId,
+      history.slice(-config.maxHistory * 2)
+    );
+
+    return "⚠️ I'm having trouble thinking right now. Please try again.";
+
+  }
+
+}
+
+// ======================================================
+// 10. PHONE NUMBER VALIDATION
+// ======================================================
+
+function normalizePhone(input) {
 
   let phone = String(input || '')
     .replace(/\D/g, '');
@@ -377,128 +483,9 @@ function normalizePhoneNumber(input) {
 
 }
 
-// =====================================================
-// 9. GEMINI RESPONSE GENERATOR
-// =====================================================
-
-async function generateReply(chatId, userMessage) {
-
-  if (!userMessage) return null;
-
-  if (!config.geminiKey) {
-
-    console.error('GEMINI_API_KEY IS MISSING');
-
-    return "⚠️ I'm having trouble thinking right now. Please try again.";
-
-  }
-
-  let history = historyCache.get(chatId) || [];
-
-  history.push({
-    role: 'user',
-    content: userMessage
-  });
-
-  const messages = [
-    {
-      role: 'system',
-      content: config.personality
-    },
-
-    ...history
-  ];
-
-  try {
-
-    console.log('GEMINI REQUEST STARTED');
-
-    console.log('MODEL:', config.model);
-
-    const response = await ai.chat.completions.create({
-
-      model: config.model,
-
-      messages,
-
-      max_tokens: config.maxTokens,
-
-      temperature: config.temperature
-
-    });
-
-    const reply =
-      response.choices?.[0]?.message?.content;
-
-    if (!reply || typeof reply !== 'string') {
-
-      throw new Error('Gemini returned an empty response.');
-
-    }
-
-    history.push({
-      role: 'assistant',
-      content: reply
-    });
-
-    historyCache.set(
-      chatId,
-      history.slice(-config.maxHistory * 2)
-    );
-
-    console.log('GEMINI RESPONSE SUCCESSFUL');
-
-    return reply;
-
-  } catch (error) {
-
-    console.error('GEMINI API ERROR:', {
-      message: error.message,
-      status: error.status,
-      code: error.code,
-      model: config.model
-    });
-
-    // Remove failed user message from history.
-
-    history.pop();
-
-    historyCache.set(
-      chatId,
-      history.slice(-config.maxHistory * 2)
-    );
-
-    // ORIGINAL FALLBACK MESSAGE.
-
-    return "⚠️ I'm having trouble thinking right now. Please try again.";
-
-  }
-
-}
-
-// =====================================================
-// 10. EXPRESS SERVER
-// =====================================================
-
-const app = express();
-
-app.use(express.json({
-  limit: '1mb'
-}));
-
-app.use(express.static(__dirname));
-
-app.get('/', (req, res) => {
-
-  res.sendFile(
-    path.join(__dirname, 'index.html')
-  );
-
-});
-
-// =====================================================
+// ======================================================
 // 11. HEALTH CHECK
-// =====================================================
+// ======================================================
 
 app.get('/health', (req, res) => {
 
@@ -512,7 +499,7 @@ app.get('/health', (req, res) => {
 
     aiProvider: 'Google Gemini',
 
-    aiModel: config.model,
+    aiModel: config.geminiModel,
 
     aiConfigured: !!config.geminiKey,
 
@@ -520,17 +507,25 @@ app.get('/health', (req, res) => {
 
     whatsappReady: isConnected,
 
+    whatsappStatus: connectionStatus,
+
     pairingReady,
 
     qrPending: !!latestQRDataUrl,
 
     lastConnectedAt,
 
-    lastConnectionError
+    lastConnectionError,
+
+    reconnectAttempts
 
   });
 
 });
+
+// ======================================================
+// 12. STATUS ENDPOINT
+// ======================================================
 
 app.get('/status', (req, res) => {
 
@@ -540,23 +535,25 @@ app.get('/status', (req, res) => {
 
     connected: isConnected,
 
+    connecting: isConnecting,
+
     mongodb: mongoReady,
 
-    pairingReady,
+    status: connectionStatus,
 
     bot: config.botName,
 
     ai: 'Google Gemini',
 
-    model: config.model
+    model: config.geminiModel
 
   });
 
 });
 
-// =====================================================
-// 12. WHATSAPP LOGIN PAGE
-// =====================================================
+// ======================================================
+// 13. WHATSAPP LOGIN PAGE
+// ======================================================
 
 app.get('/qr', (req, res) => {
 
@@ -600,11 +597,9 @@ app.get('/qr', (req, res) => {
 
           <p>Your chatbot is online.</p>
 
-          <p>AI: Google Gemini</p>
+          <p>MongoDB: Connected</p>
 
-          <p>Database: MongoDB Atlas</p>
-
-          <p>You can close this page.</p>
+          <p>Gemini AI: Ready</p>
 
         </div>
 
@@ -627,7 +622,7 @@ app.get('/qr', (req, res) => {
       </h2>
 
       <div style="
-        font-size:clamp(35px,10vw,70px);
+        font-size:clamp(40px,10vw,75px);
         font-weight:900;
         color:#128c7e;
         letter-spacing:5px;
@@ -645,13 +640,9 @@ app.get('/qr', (req, res) => {
       ">
 
         1. Open WhatsApp.<br>
-
         2. Go to Linked Devices.<br>
-
         3. Tap Link a Device.<br>
-
         4. Choose Link with phone number instead.<br>
-
         5. Enter the code above.
 
       </div>
@@ -666,14 +657,11 @@ app.get('/qr', (req, res) => {
         Scan with WhatsApp
       </h2>
 
-      <p>Linked Devices → Link a Device</p>
-
       <img
         src="${latestQRDataUrl}"
         style="
           width:75vw;
           max-width:400px;
-          height:auto;
           border:10px solid white;
           border-radius:15px;
         "
@@ -689,7 +677,9 @@ app.get('/qr', (req, res) => {
         ⏳ Starting WhatsApp...
       </h2>
 
-      <p>Please wait while your session is restored.</p>
+      <p id="connectionMessage">
+        Restoring your saved session...
+      </p>
 
       <p>MongoDB: ${
         mongoReady ? 'Connected' : 'Connecting'
@@ -713,8 +703,6 @@ app.get('/qr', (req, res) => {
 
       <meta name="viewport"
         content="width=device-width, initial-scale=1">
-
-      <meta http-equiv="refresh" content="20">
 
     </head>
 
@@ -867,9 +855,17 @@ app.get('/qr', (req, res) => {
 
             const data = await response.json();
 
+            const message =
+              document.getElementById('connectionMessage');
+
             if (data.connected) {
 
               window.location.reload();
+
+            } else if (message) {
+
+              message.innerText =
+                'WhatsApp status: ' + data.status;
 
             }
 
@@ -881,7 +877,7 @@ app.get('/qr', (req, res) => {
 
         }
 
-        setInterval(checkStatus, 5000);
+        setInterval(checkStatus, 3000);
 
       </script>
 
@@ -893,13 +889,13 @@ app.get('/qr', (req, res) => {
 
 });
 
-// =====================================================
-// 13. PAIRING CODE ENDPOINT
-// =====================================================
+// ======================================================
+// 14. PAIRING CODE REQUEST
+// ======================================================
 
 app.get('/request-pairing', async (req, res) => {
 
-  const phone = normalizePhoneNumber(req.query.phone);
+  const phone = normalizePhone(req.query.phone);
 
   if (!phone) {
 
@@ -915,7 +911,7 @@ app.get('/request-pairing', async (req, res) => {
 
     return res.status(503).json({
 
-      error: 'WhatsApp or MongoDB is not ready.'
+      error: 'WhatsApp is not initialized yet.'
 
     });
 
@@ -935,17 +931,7 @@ app.get('/request-pairing', async (req, res) => {
 
     return res.status(409).json({
 
-      error: 'A saved WhatsApp session already exists. Check connection status.'
-
-    });
-
-  }
-
-  if (!pairingReady) {
-
-    return res.status(503).json({
-
-      error: 'WhatsApp is initializing. Please wait a few seconds.'
+      error: 'A saved WhatsApp session exists. Check connection status.'
 
     });
 
@@ -955,7 +941,7 @@ app.get('/request-pairing', async (req, res) => {
 
     return res.status(409).json({
 
-      error: 'Pairing request already in progress.'
+      error: 'A pairing request is already running.'
 
     });
 
@@ -965,7 +951,7 @@ app.get('/request-pairing', async (req, res) => {
 
   try {
 
-    console.log('REQUESTING PAIRING CODE');
+    console.log('REQUESTING WHATSAPP PAIRING CODE');
 
     const code = await sock.requestPairingCode(phone);
 
@@ -984,11 +970,14 @@ app.get('/request-pairing', async (req, res) => {
 
   } catch (error) {
 
-    console.error('PAIRING ERROR:', error.message);
+    console.error(
+      'PAIRING ERROR:',
+      error.message
+    );
 
     res.status(500).json({
 
-      error: error.message || 'Failed to generate pairing code.'
+      error: error.message
 
     });
 
@@ -1000,9 +989,9 @@ app.get('/request-pairing', async (req, res) => {
 
 });
 
-// =====================================================
-// 14. SEND MESSAGE ENDPOINT
-// =====================================================
+// ======================================================
+// 15. SEND MESSAGE API
+// ======================================================
 
 app.post('/send', async (req, res) => {
 
@@ -1022,13 +1011,13 @@ app.post('/send', async (req, res) => {
 
     return res.status(400).json({
 
-      error: 'Phone number and message are required.'
+      error: 'Phone number and message required.'
 
     });
 
   }
 
-  const phone = normalizePhoneNumber(to);
+  const phone = normalizePhone(to);
 
   if (!phone) {
 
@@ -1043,36 +1032,73 @@ app.post('/send', async (req, res) => {
   try {
 
     await sock.sendMessage(
-
       `${phone}@s.whatsapp.net`,
-
-      { text: String(message) }
-
+      {
+        text: String(message)
+      }
     );
 
     res.json({
-
       success: true
-
     });
 
   } catch (error) {
 
-    console.error('SEND ERROR:', error.message);
-
     res.status(500).json({
-
       error: error.message
-
     });
 
   }
 
 });
 
-// =====================================================
-// 15. CONNECT WHATSAPP
-// =====================================================
+// ======================================================
+// 16. RECONNECTION MANAGER
+// ======================================================
+
+function scheduleReconnect() {
+
+  if (reconnectTimer || isConnected) return;
+
+  reconnectAttempts++;
+
+  const delay = Math.min(
+    3000 * Math.pow(2, reconnectAttempts - 1),
+    30000
+  );
+
+  connectionStatus = 'reconnecting';
+
+  console.log(
+    `WHATSAPP RECONNECTING IN ${delay / 1000} SECONDS`
+  );
+
+  reconnectTimer = setTimeout(async () => {
+
+    reconnectTimer = null;
+
+    try {
+
+      await connectToWhatsApp();
+
+    } catch (error) {
+
+      console.error(
+        'RECONNECT ERROR:',
+        error.message
+      );
+
+      scheduleReconnect();
+
+    }
+
+  }, delay);
+
+}
+
+// ======================================================
+// 17. CONNECT TO WHATSAPP
+// ======================================================
 
 async function connectToWhatsApp() {
 
@@ -1080,7 +1106,7 @@ async function connectToWhatsApp() {
 
   if (!mongoReady || !authCollection) {
 
-    console.log('Waiting for MongoDB...');
+    console.log('WAITING FOR MONGODB');
 
     return;
 
@@ -1088,52 +1114,51 @@ async function connectToWhatsApp() {
 
   isConnecting = true;
 
+  connectionStatus = 'connecting';
+
+  const generation = ++socketGeneration;
+
+  let currentSock = null;
+
   try {
 
-    console.log('RESTORING WHATSAPP SESSION FROM MONGODB');
+    console.log('================================');
 
-    const mongoAuth = await useMongoAuthState(
+    console.log('RESTORING WHATSAPP SESSION');
+
+    console.log('LOADING AUTHENTICATION FROM MONGODB');
+
+    // Restore existing authentication.
+
+    const mongoAuth = await createMongoAuthState(
       authCollection
     );
 
     authState = mongoAuth.state;
 
-    // Wrap key store in cache for better performance.
+    // Do not use an old socket if a newer connection
+    // attempt has already started.
+
+    if (generation !== socketGeneration) return;
+
+    // Cache encryption keys.
 
     const cachedKeys = makeCacheableSignalKeyStore(
       authState.keys,
       logger
     );
 
-    // Get latest WhatsApp Web version.
+    console.log(
+      authState.creds.registered
+        ? 'SAVED SESSION FOUND'
+        : 'NEW WHATSAPP SESSION'
+    );
 
-    let version;
+    // IMPORTANT:
+    // No external version download here.
+    // Baileys uses its bundled default version.
 
-    try {
-
-      const latest = await fetchLatestBaileysVersion();
-
-      version = latest.version;
-
-      console.log(
-        'WHATSAPP WEB VERSION:',
-        version.join('.')
-      );
-
-    } catch (error) {
-
-      console.error(
-        'VERSION FETCH FAILED:',
-        error.message
-      );
-
-      console.log('Using Baileys default version.');
-
-    }
-
-    const currentSock = makeWASocket({
-
-      ...(version ? { version } : {}),
+    currentSock = makeWASocket({
 
       auth: {
 
@@ -1163,9 +1188,9 @@ async function connectToWhatsApp() {
 
     isConnecting = false;
 
-    // =================================================
+    // ==================================================
     // SAVE CREDENTIALS
-    // =================================================
+    // ==================================================
 
     currentSock.ev.on(
       'creds.update',
@@ -1175,7 +1200,7 @@ async function connectToWhatsApp() {
 
           await mongoAuth.saveCreds();
 
-          console.log('WHATSAPP CREDENTIALS SAVED');
+          console.log('AUTHENTICATION SAVED TO MONGODB');
 
         } catch (error) {
 
@@ -1189,21 +1214,24 @@ async function connectToWhatsApp() {
       }
     );
 
-    // =================================================
-    // CONNECTION EVENTS
-    // =================================================
+    // ==================================================
+    // CONNECTION UPDATES
+    // ==================================================
 
     currentSock.ev.on(
       'connection.update',
       async update => {
+
+        if (
+          currentSock !== sock ||
+          generation !== socketGeneration
+        ) return;
 
         const {
           connection,
           lastDisconnect,
           qr
         } = update;
-
-        if (sock !== currentSock) return;
 
         // QR CODE.
 
@@ -1235,11 +1263,15 @@ async function connectToWhatsApp() {
 
         if (connection === 'connecting') {
 
+          connectionStatus = 'connecting';
+
+          pairingReady = true;
+
           console.log('WHATSAPP CONNECTING...');
 
         }
 
-        // OPEN.
+        // CONNECTED.
 
         if (connection === 'open') {
 
@@ -1259,11 +1291,28 @@ async function connectToWhatsApp() {
 
           lastConnectedAt = new Date().toISOString();
 
+          connectionStatus = 'connected';
+
           if (reconnectTimer) {
 
             clearTimeout(reconnectTimer);
 
             reconnectTimer = null;
+
+          }
+
+          // Ensure current credentials are saved.
+
+          try {
+
+            await mongoAuth.saveCreds();
+
+          } catch (error) {
+
+            console.error(
+              'INITIAL CREDENTIAL SAVE ERROR:',
+              error.message
+            );
 
           }
 
@@ -1273,13 +1322,13 @@ async function connectToWhatsApp() {
 
           console.log('MONGODB SESSION ACTIVE');
 
-          console.log('GEMINI AI:', config.model);
+          console.log('GEMINI AI:', config.geminiModel);
 
           console.log('================================');
 
         }
 
-        // CLOSE.
+        // DISCONNECTED.
 
         if (connection === 'close') {
 
@@ -1293,70 +1342,52 @@ async function connectToWhatsApp() {
 
           latestQRDataUrl = null;
 
-          sock = null;
+          if (sock === currentSock) {
+
+            sock = null;
+
+          }
 
           const statusCode =
             lastDisconnect?.error?.output?.statusCode;
 
           lastConnectionError =
             lastDisconnect?.error?.message ||
-            String(statusCode || 'Unknown disconnect');
+            String(statusCode || 'Unknown error');
 
           const loggedOut =
             statusCode === DisconnectReason.loggedOut;
 
           const replaced =
-            statusCode === 440;
+            statusCode === DisconnectReason.connectionReplaced;
 
           console.error('WHATSAPP DISCONNECTED');
 
-          console.error('STATUS CODE:', statusCode);
+          console.error('STATUS:', statusCode);
 
           console.error('REASON:', lastConnectionError);
 
-          if (!loggedOut && !replaced) {
+          if (loggedOut) {
 
-            reconnectAttempts++;
-
-            const delay = Math.min(
-              3000 * Math.pow(2, reconnectAttempts - 1),
-              30000
-            );
-
-            console.log(
-              `RECONNECTING IN ${delay / 1000} SECONDS`
-            );
-
-            if (reconnectTimer) {
-
-              clearTimeout(reconnectTimer);
-
-            }
-
-            reconnectTimer = setTimeout(() => {
-
-              connectToWhatsApp().catch(error => {
-
-                console.error(
-                  'RECONNECT ERROR:',
-                  error.message
-                );
-
-              });
-
-            }, delay);
-
-          } else if (loggedOut) {
+            connectionStatus = 'logged_out';
 
             console.error(
-              'WHATSAPP LOGGED OUT. NEW PAIRING REQUIRED.'
+              'SESSION LOGGED OUT. PAIRING REQUIRED.'
             );
 
-          } else {
+          } else if (replaced) {
+
+            connectionStatus = 'connection_replaced';
 
             console.error(
               'ANOTHER WHATSAPP CONNECTION REPLACED THIS SESSION.'
             );
+
+          } else {
+
+            connectionStatus = 'disconnected';
+
+            scheduleReconnect();
 
           }
 
@@ -1365,15 +1396,13 @@ async function connectToWhatsApp() {
       }
     );
 
-    // =================================================
-    // RECEIVE MESSAGES
-    // =================================================
+    // ==================================================
+    // INCOMING MESSAGES
+    // ==================================================
 
     currentSock.ev.on(
       'messages.upsert',
       async event => {
-
-        // Ignore historical message synchronization.
 
         if (event.type !== 'notify') return;
 
@@ -1392,11 +1421,7 @@ async function connectToWhatsApp() {
             if (
               chatId === 'status@broadcast' ||
               chatId.endsWith('@newsletter')
-            ) {
-
-              continue;
-
-            }
+            ) continue;
 
             const userMessage =
 
@@ -1410,15 +1435,12 @@ async function connectToWhatsApp() {
 
               msg.message.documentMessage?.caption;
 
-            if (!userMessage || !userMessage.trim()) {
-
-              continue;
-
-            }
+            if (
+              !userMessage ||
+              !userMessage.trim()
+            ) continue;
 
             console.log('INCOMING MESSAGE:', chatId);
-
-            console.log('MESSAGE:', userMessage);
 
             const reply = await generateReply(
               chatId,
@@ -1427,23 +1449,25 @@ async function connectToWhatsApp() {
 
             if (
               reply &&
-              sock === currentSock &&
-              isConnected
+              isConnected &&
+              sock === currentSock
             ) {
 
               await currentSock.sendMessage(
                 chatId,
-                { text: reply }
+                {
+                  text: reply
+                }
               );
 
-              console.log('REPLY SENT:', chatId);
+              console.log('AI REPLY SENT');
 
             }
 
           } catch (error) {
 
             console.error(
-              'MESSAGE PROCESSING ERROR:',
+              'MESSAGE ERROR:',
               error.message
             );
 
@@ -1460,79 +1484,89 @@ async function connectToWhatsApp() {
 
     isConnected = false;
 
+    connectionStatus = 'error';
+
     lastConnectionError = error.message;
 
-    console.error('WHATSAPP START ERROR:', error);
+    console.error(
+      'WHATSAPP START ERROR:',
+      error
+    );
 
-    if (reconnectTimer) {
+    if (generation === socketGeneration) {
 
-      clearTimeout(reconnectTimer);
+      if (currentSock) {
+
+        try {
+          currentSock.end(error);
+        } catch (_) {}
+
+      }
+
+      sock = null;
+
+      scheduleReconnect();
 
     }
-
-    reconnectTimer = setTimeout(() => {
-
-      connectToWhatsApp().catch(err => {
-
-        console.error('RETRY ERROR:', err.message);
-
-      });
-
-    }, 5000);
 
   }
 
 }
 
-// =====================================================
-// 16. DATABASE STARTUP RETRY
-// =====================================================
+// ======================================================
+// 18. DATABASE RETRY
+// ======================================================
 
-let databaseRetrying = false;
+let mongoRetryTimer = null;
 
-async function retryMongoConnection() {
+async function retryMongo() {
 
-  if (databaseRetrying || mongoReady) return;
-
-  databaseRetrying = true;
+  if (mongoReady) return;
 
   try {
 
-    console.log('RETRYING MONGODB CONNECTION...');
-
     await connectMongo();
 
-    databaseRetrying = false;
+    console.log('MONGODB RESTORED');
+
+    if (mongoRetryTimer) {
+
+      clearTimeout(mongoRetryTimer);
+
+      mongoRetryTimer = null;
+
+    }
 
     await connectToWhatsApp();
 
   } catch (error) {
 
-    databaseRetrying = false;
-
     console.error(
-      'MONGODB CONNECTION ERROR:',
+      'MONGODB ERROR:',
       error.message
     );
 
-    setTimeout(
-      retryMongoConnection,
-      15000
-    );
+    if (!mongoRetryTimer) {
+
+      mongoRetryTimer = setTimeout(() => {
+
+        mongoRetryTimer = null;
+
+        retryMongo();
+
+      }, 15000);
+
+    }
 
   }
 
 }
 
-// =====================================================
-// 17. START SERVER
-// =====================================================
+// ======================================================
+// 19. START SERVER
+// ======================================================
 
 async function startApplication() {
-
-  if (serverStarted) return;
-
-  serverStarted = true;
 
   app.listen(
     config.port,
@@ -1541,11 +1575,11 @@ async function startApplication() {
 
       console.log('================================');
 
-      console.log('WHATSAPP CHATBOT SERVER STARTED');
+      console.log('WHATSAPP BOT SERVER STARTED');
 
       console.log('PORT:', config.port);
 
-      console.log('AI MODEL:', config.model);
+      console.log('AI:', config.geminiModel);
 
       console.log('================================');
 
@@ -1554,7 +1588,7 @@ async function startApplication() {
 
   if (!config.geminiKey) {
 
-    console.error('WARNING: GEMINI_API_KEY IS MISSING');
+    console.error('GEMINI_API_KEY IS MISSING');
 
   }
 
@@ -1567,32 +1601,43 @@ async function startApplication() {
   } catch (error) {
 
     console.error(
-      'INITIAL STARTUP ERROR:',
+      'INITIALIZATION ERROR:',
       error.message
     );
 
-    setTimeout(
-      retryMongoConnection,
-      10000
-    );
+    retryMongo();
 
   }
 
 }
 
-// =====================================================
-// 18. GRACEFUL SHUTDOWN
-// =====================================================
+// ======================================================
+// 20. SHUTDOWN
+// ======================================================
+
+let shuttingDown = false;
 
 async function shutdown() {
 
-  console.log('SHUTTING DOWN SERVER...');
+  if (shuttingDown) return;
+
+  shuttingDown = true;
+
+  console.log('SERVER SHUTTING DOWN');
 
   if (reconnectTimer) {
 
     clearTimeout(reconnectTimer);
 
     reconnectTimer = null;
+
+  }
+
+  if (mongoRetryTimer) {
+
+    clearTimeout(mongoRetryTimer);
+
+    mongoRetryTimer = null;
 
   }
 
@@ -1625,12 +1670,15 @@ process.on('SIGTERM', shutdown);
 
 process.on('SIGINT', shutdown);
 
-// =====================================================
-// 19. RUN
-// =====================================================
+// ======================================================
+// 21. RUN APPLICATION
+// ======================================================
 
 startApplication().catch(error => {
 
-  console.error('FATAL SERVER ERROR:', error);
+  console.error(
+    'FATAL APPLICATION ERROR:',
+    error
+  );
 
 });
