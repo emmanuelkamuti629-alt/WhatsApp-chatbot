@@ -3,7 +3,6 @@ require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const OpenAI = require('openai');
 const NodeCache = require('node-cache');
 const pino = require('pino');
@@ -96,9 +95,7 @@ const app = express();
 
 app.use(express.json({ limit: '1mb' }));
 
-// IMPORTANT:
 // index.html is in the project root.
-// No public folder or express.static is required.
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
   serverSelectionTimeoutMS: 10000,
@@ -1103,6 +1100,59 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     log('ERROR', 'Group messaging update failed', error);
 
     res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// =====================================================
+// API: MANUALLY RELEASE ADMIN TAKEOVER
+// =====================================================
+
+app.post('/api/takeover/release', adminAuth, async (req, res) => {
+  try {
+    const { accountId, phone } = req.body || {};
+
+    const account = accounts.get(String(accountId || ''));
+
+    if (!account || !account.connected) {
+      return res.status(503).json({
+        error: 'Selected WhatsApp account is not connected.'
+      });
+    }
+
+    const number = String(phone || '').replace(/\D/g, '');
+
+    if (!/^\d{10,15}$/.test(number)) {
+      return res.status(400).json({
+        error: 'Enter a valid phone number with country code.'
+      });
+    }
+
+    const jid = `${number}@s.whatsapp.net`;
+    const key = activityKey(account.id, jid);
+
+    const wasActive = adminActivity.has(key);
+
+    // Remove the ten-minute takeover restriction for this chat.
+    adminActivity.delete(key);
+
+    log('SUCCESS', 'Admin takeover manually released', {
+      account: account.id,
+      chat: maskJid(jid)
+    });
+
+    return res.json({
+      success: true,
+      message: wasActive
+        ? 'Takeover released. Manny can now reply to this chat.'
+        : 'No active takeover restriction was found. Manny is allowed to reply.'
+    });
+
+  } catch (error) {
+    log('ERROR', 'Manual takeover release failed', error);
+
+    return res.status(500).json({
       error: error.message
     });
   }
