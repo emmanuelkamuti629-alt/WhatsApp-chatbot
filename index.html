@@ -1,144 +1,963 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WhatsApp AI Chatbot</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#111827">
+
+  <title>Nonchalant_Q WhatsApp Bot</title>
+
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+    }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #25d366 0%, #128c7e 100%);
+      margin: 0;
       min-height: 100vh;
+      padding: 28px 14px;
+      font-family: Arial, sans-serif;
+      color: #f8fafc;
+      background: linear-gradient(
+        135deg,
+        #12bd70,
+        #087f63 55%,
+        #075e54
+      );
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 620px;
+      margin: 28px auto;
+    }
+
+    .panel {
+      background: #111315;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: 0 18px 55px rgba(0,0,0,.25);
+    }
+
+    h1 {
+      margin: 0 0 7px;
+      color: #80dfca;
+      font-size: 27px;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      color: #9ca3af;
+    }
+
+    .status {
+      background: #242629;
+      border-radius: 14px;
+      padding: 15px 16px;
+      margin: 12px 0;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      margin-right: 9px;
+      background: #f59e0b;
+    }
+
+    .dot.online {
+      background: #22c55e;
+      box-shadow: 0 0 12px #22c55e;
+    }
+
+    .dot.offline {
+      background: #ef4444;
+    }
+
+    .section {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #303338;
+    }
+
+    h2 {
+      margin: 0 0 13px;
+      font-size: 19px;
+      color: #d1fae5;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 7px;
+      color: #cbd5e1;
+      font-weight: 700;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      padding: 15px;
+      border: 1px solid #555b63;
+      border-radius: 12px;
+      background: #383a3d;
+      color: white;
+      font-size: 16px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+
+    input:focus,
+    textarea:focus {
+      border-color: #22c55e;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 15px;
+      margin-top: 13px;
+      background: #20c96b;
+      color: #062b19;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+
+    .secondary {
+      background: #30343a;
+      color: #f8fafc;
+    }
+
+    /* GROUP SWITCH */
+
+    .switch-row {
       display: flex;
       align-items: center;
-      justify-content: center;
-      padding: 20px;
-      color: #111;
+      justify-content: space-between;
+      gap: 15px;
+      background: #242629;
+      padding: 17px;
+      border-radius: 15px;
+      margin-top: 12px;
     }
-    .card {
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+
+    .switch-copy strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .switch-copy small {
+      color: #aeb6c2;
+      line-height: 1.4;
+      display: block;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+      flex: 0 0 auto;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #666;
+      transition: .2s;
+      border-radius: 34px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: '';
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      top: 4px;
+      background: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    .switch input:checked + .slider {
+      background: #16a34a;
+    }
+
+    .switch input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+
+    .hint {
+      color: #aeb6c2;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message {
+      min-height: 22px;
+      margin-top: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .good {
+      color: #86efac;
+    }
+
+    .bad {
+      color: #fca5a5;
+    }
+
+    #qrImage {
+      display: block;
+      max-width: 290px;
       width: 100%;
-      max-width: 520px;
-      padding: 32px;
+      margin: 16px auto;
+      border-radius: 10px;
+      background: white;
     }
-    h1 { font-size: 24px; margin-bottom: 4px; color: #075e54; }
-    .sub { color: #667781; font-size: 14px; margin-bottom: 24px; }
-    .status {
-      display: flex; align-items: center; gap: 8px;
-      padding: 10px 14px; border-radius: 10px;
-      background: #f0f2f5; font-size: 14px; margin-bottom: 20px;
+
+    #pairCode {
+      text-align: center;
+      font-size: 28px;
+      font-weight: bold;
+      letter-spacing: 4px;
+      color: #86efac;
+      margin-top: 14px;
     }
-    .dot { width: 10px; height: 10px; border-radius: 50%; background: #999; }
-    .dot.online { background: #25d366; box-shadow: 0 0 8px #25d366; }
-    .dot.offline { background: #e53935; }
-    label { display: block; font-size: 13px; font-weight: 600; color: #3b4a54; margin-bottom: 6px; }
-    input, textarea {
-      width: 100%; padding: 12px 14px; border: 1px solid #d1d7db;
-      border-radius: 10px; font-size: 14px; font-family: inherit;
-      outline: none; transition: border-color 0.2s;
+
+    .hidden {
+      display: none;
     }
-    input:focus, textarea:focus { border-color: #25d366; }
-    textarea { resize: vertical; min-height: 100px; }
-    .field { margin-bottom: 16px; }
-    button {
-      width: 100%; padding: 12px; border: none; border-radius: 10px;
-      background: #25d366; color: #fff; font-size: 15px; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
+
+    @media (max-width: 420px) {
+      .panel {
+        padding: 21px 17px;
+      }
+
+      h1 {
+        font-size: 23px;
+      }
     }
-    button:hover { background: #1da851; }
-    button:disabled { background: #a0d9b7; cursor: not-allowed; }
-    #response { margin-top: 16px; font-size: 13px; color: #667781; text-align: center; }
-    .qr-box {
-      margin-top: 20px; padding: 16px; background: #f0f2f5;
-      border-radius: 10px; text-align: center; font-size: 13px;
-    }
-    .qr-box a { color: #128c7e; font-weight: 600; }
   </style>
 </head>
+
 <body>
-  <div class="card">
-    <h1>WhatsApp AI Chatbot</h1>
-    <p class="sub">Control panel &amp; status</p>
 
-    <div class="status">
-      <span class="dot" id="dot"></span>
-      <span id="statusText">Checking status...</span>
+  <main class="wrap">
+
+    <div class="panel">
+
+      <h1>Nonchalant_Q WhatsApp Bot</h1>
+
+      <p class="subtitle">
+        Admin control panel &amp; bot status
+      </p>
+
+      <!-- CONNECTION STATUS -->
+
+      <div class="status">
+        <span id="waDot" class="dot"></span>
+        <span id="waStatus">
+          Checking WhatsApp connection...
+        </span>
+      </div>
+
+      <div class="status">
+        <span id="mongoDot" class="dot"></span>
+        <span id="mongoStatus">
+          MongoDB: Checking...
+        </span>
+      </div>
+
+      <div class="status">
+        <span id="aiDot" class="dot"></span>
+        <span id="aiStatus">
+          Gemini: Checking...
+        </span>
+      </div>
+
+      <!-- GROUP MESSAGING CONTROL -->
+
+      <section class="section">
+
+        <h2>Group messaging control</h2>
+
+        <p class="hint">
+          Enter your admin control password to unlock the switch.
+          When turned ON, the bot announces itself in all groups
+          it has joined, then starts replying to group messages.
+          When OFF, it stops group replies and announces that
+          the admin is back. Private chats continue working.
+        </p>
+
+        <label for="adminToken">
+          Admin control password
+        </label>
+
+        <input
+          id="adminToken"
+          type="password"
+          autocomplete="current-password"
+          placeholder="Enter ADMIN_CONTROL_TOKEN"
+        >
+
+        <button
+          id="saveToken"
+          class="secondary"
+          type="button"
+        >
+          Unlock admin controls
+        </button>
+
+        <!-- TOGGLE SWITCH -->
+
+        <div class="switch-row">
+
+          <div class="switch-copy">
+
+            <strong id="groupModeText">
+              Group messaging is OFF
+            </strong>
+
+            <small id="groupModeHint">
+              The bot will not reply to group messages.
+            </small>
+
+          </div>
+
+          <label
+            class="switch"
+            aria-label="Allow group messaging"
+          >
+
+            <input
+              id="groupToggle"
+              type="checkbox"
+              disabled
+            >
+
+            <span class="slider"></span>
+
+          </label>
+
+        </div>
+
+        <div
+          id="groupMessage"
+          class="message"
+          role="status"
+        ></div>
+
+      </section>
+
+      <!-- MANUAL MESSAGE -->
+
+      <section class="section">
+
+        <h2>Send a private WhatsApp message</h2>
+
+        <label for="phone">
+          Phone number with country code
+        </label>
+
+        <input
+          id="phone"
+          type="tel"
+          inputmode="numeric"
+          placeholder="254712345678"
+          maxlength="15"
+        >
+
+        <label for="message">
+          Message
+        </label>
+
+        <textarea
+          id="message"
+          placeholder="Type a message..."
+        ></textarea>
+
+        <button
+          id="sendMessage"
+          type="button"
+        >
+          Send Message
+        </button>
+
+        <div
+          id="sendResult"
+          class="message"
+          role="status"
+        ></div>
+
+      </section>
+
+      <!-- WHATSAPP PAIRING -->
+
+      <section
+        class="section"
+        id="pairingSection"
+      >
+
+        <h2>Connect WhatsApp</h2>
+
+        <p class="hint">
+          If WhatsApp is not connected, enter your number
+          with country code to request a pairing code,
+          or scan the QR code.
+        </p>
+
+        <label for="pairPhone">
+          WhatsApp phone number with country code
+        </label>
+
+        <input
+          id="pairPhone"
+          type="tel"
+          inputmode="numeric"
+          placeholder="254712345678"
+          maxlength="15"
+        >
+
+        <button
+          id="pairButton"
+          type="button"
+        >
+          Get Pairing Code
+        </button>
+
+        <div
+          id="pairResult"
+          class="message"
+          role="status"
+        ></div>
+
+        <div id="pairCode"></div>
+
+        <p
+          id="pairInstructions"
+          class="hint hidden"
+        >
+          Open WhatsApp → Linked Devices → Link a Device →
+          Link with phone number instead.
+        </p>
+
+        <p
+          class="hint"
+          style="text-align:center;margin-top:20px"
+        >
+          Or scan this QR code using WhatsApp →
+          Linked Devices → Link a Device.
+        </p>
+
+        <img
+          id="qrImage"
+          class="hidden"
+          alt="WhatsApp login QR code"
+        >
+
+      </section>
+
     </div>
 
-    <div class="field">
-      <label for="to">Send to (phone with country code, e.g. 254712345678)</label>
-      <input id="to" type="tel" placeholder="254712345678" />
-    </div>
-    <div class="field">
-      <label for="message">Message</label>
-      <textarea id="message" placeholder="Type a message..."></textarea>
-    </div>
-    <button id="sendBtn">Send Message</button>
-    <div id="response"></div>
+  </main>
 
-    <div class="qr-box">
-      <strong>First time?</strong> Scan the QR code in your terminal with
-      <br />WhatsApp → Linked Devices → Link a Device.
-    </div>
-  </div>
+  <!-- JAVASCRIPT -->
 
   <script>
-    const dot = document.getElementById('dot');
-    const statusText = document.getElementById('statusText');
-    const sendBtn = document.getElementById('sendBtn');
-    const responseEl = document.getElementById('response');
 
-    async function checkStatus() {
-      try {
-        const res = await fetch('/health');
-        const data = await res.json();
-        if (data.whatsappReady) {
-          dot.className = 'dot online';
-          statusText.textContent = `Bot "${data.bot}" is ONLINE`;
-        } else {
-          dot.className = 'dot offline';
-          statusText.textContent = `Bot "${data.bot}" is starting... scan QR in terminal`;
-        }
-      } catch {
-        dot.className = 'dot offline';
-        statusText.textContent = 'Server unreachable';
-      }
+    const $ = id => document.getElementById(id);
+
+    let currentGroupEnabled = false;
+    let adminUnlocked = false;
+
+    // =================================================
+    // STATUS INDICATORS
+    // =================================================
+
+    function setDot(id, state) {
+
+      const el = $(id);
+
+      el.className =
+        'dot' +
+        (
+          state === true
+            ? ' online'
+            : state === false
+              ? ' offline'
+              : ''
+        );
+
     }
 
-    sendBtn.addEventListener('click', async () => {
-      const to = document.getElementById('to').value.trim();
-      const message = document.getElementById('message').value.trim();
-      if (!to || !message) {
-        responseEl.textContent = '⚠️ Please fill in both fields.';
-        return;
-      }
-      sendBtn.disabled = true;
-      responseEl.textContent = 'Sending...';
-      try {
-        const res = await fetch('/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to, message })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          responseEl.textContent = '✅ Message sent!';
-          document.getElementById('message').value = '';
-        } else {
-          responseEl.textContent = '❌ ' + (data.error || 'Failed to send');
-        }
-      } catch (err) {
-        responseEl.textContent = '❌ ' + err.message;
-      } finally {
-        sendBtn.disabled = false;
-      }
-    });
+    function showMessage(id, text, good) {
 
-    checkStatus();
-    setInterval(checkStatus, 5000);
+      $(id).textContent = text || '';
+
+      $(id).className =
+        'message ' + (good ? 'good' : 'bad');
+
+    }
+
+    function adminToken() {
+      return $('adminToken').value.trim();
+    }
+
+    // =================================================
+    // UPDATE BOT STATUS
+    // =================================================
+
+    async function refreshStatus() {
+
+      try {
+
+        const response = await fetch(
+          '/status',
+          {
+            cache: 'no-store'
+          }
+        );
+
+        const data = await response.json();
+
+        $('waStatus').textContent =
+          data.connected
+            ? 'WhatsApp Connected'
+            : 'WhatsApp: ' + (data.state || 'not connected');
+
+        setDot('waDot', !!data.connected);
+
+        $('mongoStatus').textContent =
+          'MongoDB: ' +
+          (
+            data.mongoConnected
+              ? 'Connected'
+              : 'Disconnected'
+          );
+
+        setDot('mongoDot', !!data.mongoConnected);
+
+        $('aiStatus').textContent =
+          'Gemini: ' +
+          (
+            data.aiConnected
+              ? 'Working'
+              : data.aiConfigured
+                ? 'Configured; not currently verified'
+                : 'API key missing'
+          );
+
+        setDot('aiDot', !!data.aiConnected);
+
+        // HIDE PAIRING SECTION WHEN CONNECTED
+
+        $('pairingSection').classList.toggle(
+          'hidden',
+          !!data.connected
+        );
+
+        // UPDATE QR CODE
+
+        if (data.qr) {
+
+          $('qrImage').src = data.qr;
+
+          $('qrImage').classList.remove('hidden');
+
+        } else {
+
+          $('qrImage').classList.add('hidden');
+
+        }
+
+        // UPDATE GROUP SWITCH
+
+        currentGroupEnabled =
+          !!data.groupRepliesEnabled;
+
+        $('groupToggle').checked =
+          currentGroupEnabled;
+
+        updateGroupText();
+
+      } catch (error) {
+
+        $('waStatus').textContent =
+          'Could not load status: ' + error.message;
+
+        setDot('waDot', false);
+
+      }
+
+    }
+
+    // =================================================
+    // GROUP SWITCH TEXT
+    // =================================================
+
+    function updateGroupText() {
+
+      $('groupModeText').textContent =
+        'Group messaging is ' +
+        (currentGroupEnabled ? 'ON' : 'OFF');
+
+      $('groupModeHint').textContent =
+        currentGroupEnabled
+          ? 'The bot can reply to messages in your joined groups.'
+          : 'The bot will not reply to group messages.';
+
+    }
+
+    // =================================================
+    // ADMIN AUTHENTICATION
+    // =================================================
+
+    $('saveToken').addEventListener(
+      'click',
+      async () => {
+
+        if (!adminToken()) {
+
+          showMessage(
+            'groupMessage',
+            'Enter your admin control password first.',
+            false
+          );
+
+          return;
+
+        }
+
+        try {
+
+          const response = await fetch(
+            '/api/group-settings',
+            {
+              cache: 'no-store',
+
+              headers: {
+                'x-admin-token': adminToken()
+              }
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error('Could not read group settings.');
+          }
+
+          adminUnlocked = true;
+
+          $('groupToggle').disabled = false;
+
+          showMessage(
+            'groupMessage',
+            'Admin controls unlocked on this page. You can now change group messaging.',
+            true
+          );
+
+        } catch (error) {
+
+          showMessage(
+            'groupMessage',
+            error.message,
+            false
+          );
+
+        }
+
+      }
+    );
+
+    // =================================================
+    // GROUP MESSAGING ON/OFF
+    // =================================================
+
+    $('groupToggle').addEventListener(
+      'change',
+      async event => {
+
+        if (!adminUnlocked || !adminToken()) {
+
+          event.target.checked =
+            currentGroupEnabled;
+
+          showMessage(
+            'groupMessage',
+            'Unlock admin controls with your password first.',
+            false
+          );
+
+          return;
+
+        }
+
+        const requested = event.target.checked;
+
+        event.target.disabled = true;
+
+        showMessage(
+          'groupMessage',
+          requested
+            ? 'Turning ON and sending the announcement to your groups...'
+            : 'Turning OFF and notifying your groups...',
+          true
+        );
+
+        try {
+
+          const response = await fetch(
+            '/api/group-toggle',
+            {
+              method: 'POST',
+
+              headers: {
+                'Content-Type': 'application/json',
+                'x-admin-token': adminToken()
+              },
+
+              body: JSON.stringify({
+                enabled: requested
+              })
+            }
+          );
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error || 'Could not change group mode.'
+            );
+          }
+
+          currentGroupEnabled = data.enabled;
+
+          event.target.checked =
+            currentGroupEnabled;
+
+          updateGroupText();
+
+          const a = data.announcement;
+
+          const detail = a
+            ? ` Announcement sent: ${a.sent}/${a.total} groups; failed: ${a.failed}.`
+            : '';
+
+          showMessage(
+            'groupMessage',
+            data.message + detail,
+            true
+          );
+
+        } catch (error) {
+
+          event.target.checked =
+            currentGroupEnabled;
+
+          showMessage(
+            'groupMessage',
+            error.message,
+            false
+          );
+
+        } finally {
+
+          event.target.disabled = false;
+
+        }
+
+      }
+    );
+
+    // =================================================
+    // SEND PRIVATE MESSAGE
+    // =================================================
+
+    $('sendMessage').addEventListener(
+      'click',
+      async () => {
+
+        const phone =
+          $('phone').value.trim();
+
+        const message =
+          $('message').value.trim();
+
+        if (!/^\d{10,15}$/.test(phone)) {
+
+          return showMessage(
+            'sendResult',
+            'Enter a valid phone number with country code, without +.',
+            false
+          );
+
+        }
+
+        if (!message) {
+
+          return showMessage(
+            'sendResult',
+            'Type a message first.',
+            false
+          );
+
+        }
+
+        $('sendMessage').disabled = true;
+
+        try {
+
+          const response = await fetch(
+            '/send',
+            {
+              method: 'POST',
+
+              headers: {
+                'Content-Type': 'application/json'
+              },
+
+              body: JSON.stringify({
+                to: phone,
+                message
+              })
+            }
+          );
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error || 'Message could not be sent.'
+            );
+          }
+
+          showMessage(
+            'sendResult',
+            data.message || 'Message sent successfully.',
+            true
+          );
+
+          $('message').value = '';
+
+        } catch (error) {
+
+          showMessage(
+            'sendResult',
+            error.message,
+            false
+          );
+
+        } finally {
+
+          $('sendMessage').disabled = false;
+
+        }
+
+      }
+    );
+
+    // =================================================
+    // REQUEST WHATSAPP PAIRING CODE
+    // =================================================
+
+    $('pairButton').addEventListener(
+      'click',
+      async () => {
+
+        const phone =
+          $('pairPhone').value.trim();
+
+        if (!/^\d{10,15}$/.test(phone)) {
+
+          return showMessage(
+            'pairResult',
+            'Enter a valid number with country code, without +.',
+            false
+          );
+
+        }
+
+        $('pairButton').disabled = true;
+
+        $('pairCode').textContent = '';
+
+        try {
+
+          const response = await fetch(
+            '/request-pairing?phone=' +
+            encodeURIComponent(phone)
+          );
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error || 'Pairing failed.'
+            );
+          }
+
+          $('pairCode').textContent =
+            data.code;
+
+          $('pairInstructions').classList.remove(
+            'hidden'
+          );
+
+          showMessage(
+            'pairResult',
+            'Pairing code generated successfully.',
+            true
+          );
+
+        } catch (error) {
+
+          showMessage(
+            'pairResult',
+            error.message,
+            false
+          );
+
+        } finally {
+
+          $('pairButton').disabled = false;
+
+        }
+
+      }
+    );
+
+    // =================================================
+    // AUTOMATIC STATUS REFRESH
+    // =================================================
+
+    refreshStatus();
+
+    setInterval(refreshStatus, 5000);
+
   </script>
+
 </body>
 </html>
