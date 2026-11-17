@@ -1,963 +1,648 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#111827">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#071b16">
+<title>NONCHALANT_Q | WhatsApp Bot</title>
 
-  <title>Nonchalant_Q WhatsApp Bot</title>
+<style>
+*{box-sizing:border-box}
 
-  <style>
-    * {
-      box-sizing: border-box;
-    }
+body{
+ margin:0;
+ padding:20px 12px;
+ min-height:100vh;
+ background:linear-gradient(135deg,#063d2c,#071b16,#020807);
+ font-family:Arial,sans-serif;
+ color:#f8fafc;
+}
 
-    body {
-      margin: 0;
-      min-height: 100vh;
-      padding: 28px 14px;
-      font-family: Arial, sans-serif;
-      color: #f8fafc;
-      background: linear-gradient(
-        135deg,
-        #12bd70,
-        #087f63 55%,
-        #075e54
-      );
-    }
+.wrap{max-width:760px;margin:auto}
 
-    .wrap {
-      width: 100%;
-      max-width: 620px;
-      margin: 28px auto;
-    }
+.panel{
+ background:#101a17;
+ border:1px solid #263b32;
+ border-radius:20px;
+ padding:22px;
+ margin-bottom:18px;
+ box-shadow:0 12px 35px #0005;
+}
 
-    .panel {
-      background: #111315;
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 24px;
-      padding: 28px;
-      box-shadow: 0 18px 55px rgba(0,0,0,.25);
-    }
+h1{color:#6ee7b7;font-size:25px;margin:0 0 7px}
+h2{font-size:19px;color:#86efac;margin:0 0 15px}
+.subtitle,.hint{color:#9ca3af;line-height:1.6}
+.section{border-top:1px solid #304139;padding-top:20px;margin-top:22px}
 
-    h1 {
-      margin: 0 0 7px;
-      color: #80dfca;
-      font-size: 27px;
-    }
+.status{
+ padding:13px;
+ background:#1c2923;
+ border-radius:12px;
+ margin:9px 0;
+ overflow-wrap:anywhere;
+ line-height:1.5;
+}
 
-    .subtitle {
-      margin: 0 0 24px;
-      color: #9ca3af;
-    }
+.dot{
+ display:inline-block;
+ width:10px;height:10px;
+ border-radius:50%;
+ margin-right:8px;
+ background:#f59e0b;
+}
+.online{background:#22c55e;box-shadow:0 0 9px #22c55e}
+.offline{background:#ef4444}
 
-    .status {
-      background: #242629;
-      border-radius: 14px;
-      padding: 15px 16px;
-      margin: 12px 0;
-      line-height: 1.5;
-      overflow-wrap: anywhere;
-    }
+label{display:block;margin:13px 0 7px;font-weight:bold;color:#d1fae5}
 
-    .dot {
-      display: inline-block;
-      width: 11px;
-      height: 11px;
-      border-radius: 50%;
-      margin-right: 9px;
-      background: #f59e0b;
-    }
+input,textarea,select{
+ width:100%;
+ padding:14px;
+ border:1px solid #40554a;
+ border-radius:10px;
+ background:#202e27;
+ color:white;
+ font-size:15px;
+ outline:none;
+}
 
-    .dot.online {
-      background: #22c55e;
-      box-shadow: 0 0 12px #22c55e;
-    }
+textarea{min-height:100px;resize:vertical}
 
-    .dot.offline {
-      background: #ef4444;
-    }
+button{
+ width:100%;
+ padding:14px;
+ margin-top:12px;
+ border:0;
+ border-radius:10px;
+ background:#22c55e;
+ color:#052e16;
+ font-weight:bold;
+ font-size:15px;
+ cursor:pointer;
+}
 
-    .section {
-      margin-top: 24px;
-      padding-top: 20px;
-      border-top: 1px solid #303338;
-    }
+button:disabled{opacity:.5;cursor:not-allowed}
+.secondary{background:#33443b;color:white}
+.danger{background:#991b1b;color:white}
+.blue{background:#2563eb;color:white}
 
-    h2 {
-      margin: 0 0 13px;
-      font-size: 19px;
-      color: #d1fae5;
-    }
+.switch-row{
+ display:flex;
+ align-items:center;
+ justify-content:space-between;
+ gap:15px;
+ padding:16px;
+ margin-top:12px;
+ background:#1c2923;
+ border-radius:13px;
+}
 
-    label {
-      display: block;
-      margin: 14px 0 7px;
-      color: #cbd5e1;
-      font-weight: 700;
-    }
+.switch-copy strong{display:block;margin-bottom:5px}
+.switch-copy small{color:#a7b7ad;line-height:1.5}
 
-    input,
-    textarea {
-      width: 100%;
-      padding: 15px;
-      border: 1px solid #555b63;
-      border-radius: 12px;
-      background: #383a3d;
-      color: white;
-      font-size: 16px;
-      outline: none;
-    }
+.switch{
+ position:relative;
+ width:55px;
+ height:30px;
+ flex-shrink:0;
+}
+.switch input{opacity:0;width:0;height:0}
+.slider{
+ position:absolute;inset:0;
+ background:#555;
+ border-radius:30px;
+ cursor:pointer;
+ transition:.2s;
+}
+.slider:before{
+ content:"";
+ position:absolute;
+ width:22px;height:22px;
+ left:4px;top:4px;
+ background:white;
+ border-radius:50%;
+ transition:.2s;
+}
+.switch input:checked+.slider{background:#16a34a}
+.switch input:checked+.slider:before{transform:translateX(25px)}
 
-    textarea {
-      min-height: 110px;
-      resize: vertical;
-    }
+.message{margin-top:10px;min-height:20px;font-size:14px;line-height:1.5}
+.good{color:#86efac}
+.bad{color:#fca5a5}
 
-    input:focus,
-    textarea:focus {
-      border-color: #22c55e;
-    }
+.account{
+ background:#1b2922;
+ border:1px solid #34473c;
+ border-radius:15px;
+ padding:16px;
+ margin-top:15px;
+}
 
-    button {
-      width: 100%;
-      border: 0;
-      border-radius: 12px;
-      padding: 15px;
-      margin-top: 13px;
-      background: #20c96b;
-      color: #062b19;
-      font-size: 16px;
-      font-weight: 700;
-      cursor: pointer;
-    }
+.account h3{margin:0 0 10px;color:#86efac}
+.account-status{font-size:14px;color:#cbd5e1;line-height:1.8}
 
-    button:disabled {
-      opacity: .55;
-      cursor: not-allowed;
-    }
+.qr{
+ display:block;
+ width:100%;
+ max-width:260px;
+ margin:15px auto;
+ background:white;
+ border-radius:10px;
+}
 
-    .secondary {
-      background: #30343a;
-      color: #f8fafc;
-    }
+.pair-code{
+ font-size:27px;
+ font-weight:bold;
+ letter-spacing:4px;
+ text-align:center;
+ color:#86efac;
+ padding:15px;
+ overflow-wrap:anywhere;
+}
 
-    /* GROUP SWITCH */
+.hidden{display:none!important}
 
-    .switch-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 15px;
-      background: #242629;
-      padding: 17px;
-      border-radius: 15px;
-      margin-top: 12px;
-    }
+.stats{
+ display:grid;
+ grid-template-columns:repeat(2,1fr);
+ gap:10px;
+ margin-top:15px;
+}
 
-    .switch-copy strong {
-      display: block;
-      margin-bottom: 5px;
-    }
+.stat{
+ background:#1c2923;
+ border-radius:12px;
+ padding:14px;
+}
+.stat small{color:#9ca3af}
+.stat strong{display:block;margin-top:7px;font-size:20px;color:#86efac}
 
-    .switch-copy small {
-      color: #aeb6c2;
-      line-height: 1.4;
-      display: block;
-    }
-
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 60px;
-      height: 34px;
-      flex: 0 0 auto;
-    }
-
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .slider {
-      position: absolute;
-      cursor: pointer;
-      inset: 0;
-      background: #666;
-      transition: .2s;
-      border-radius: 34px;
-    }
-
-    .slider:before {
-      position: absolute;
-      content: '';
-      height: 26px;
-      width: 26px;
-      left: 4px;
-      top: 4px;
-      background: white;
-      transition: .2s;
-      border-radius: 50%;
-    }
-
-    .switch input:checked + .slider {
-      background: #16a34a;
-    }
-
-    .switch input:checked + .slider:before {
-      transform: translateX(26px);
-    }
-
-    .hint {
-      color: #aeb6c2;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .message {
-      min-height: 22px;
-      margin-top: 12px;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .good {
-      color: #86efac;
-    }
-
-    .bad {
-      color: #fca5a5;
-    }
-
-    #qrImage {
-      display: block;
-      max-width: 290px;
-      width: 100%;
-      margin: 16px auto;
-      border-radius: 10px;
-      background: white;
-    }
-
-    #pairCode {
-      text-align: center;
-      font-size: 28px;
-      font-weight: bold;
-      letter-spacing: 4px;
-      color: #86efac;
-      margin-top: 14px;
-    }
-
-    .hidden {
-      display: none;
-    }
-
-    @media (max-width: 420px) {
-      .panel {
-        padding: 21px 17px;
-      }
-
-      h1 {
-        font-size: 23px;
-      }
-    }
-  </style>
+@media(max-width:420px){
+ .panel{padding:17px}
+ h1{font-size:21px}
+}
+</style>
 </head>
 
 <body>
-
-  <main class="wrap">
-
-    <div class="panel">
-
-      <h1>Nonchalant_Q WhatsApp Bot</h1>
-
-      <p class="subtitle">
-        Admin control panel &amp; bot status
-      </p>
-
-      <!-- CONNECTION STATUS -->
-
-      <div class="status">
-        <span id="waDot" class="dot"></span>
-        <span id="waStatus">
-          Checking WhatsApp connection...
-        </span>
-      </div>
-
-      <div class="status">
-        <span id="mongoDot" class="dot"></span>
-        <span id="mongoStatus">
-          MongoDB: Checking...
-        </span>
-      </div>
-
-      <div class="status">
-        <span id="aiDot" class="dot"></span>
-        <span id="aiStatus">
-          Gemini: Checking...
-        </span>
-      </div>
-
-      <!-- GROUP MESSAGING CONTROL -->
-
-      <section class="section">
-
-        <h2>Group messaging control</h2>
-
-        <p class="hint">
-          Enter your admin control password to unlock the switch.
-          When turned ON, the bot announces itself in all groups
-          it has joined, then starts replying to group messages.
-          When OFF, it stops group replies and announces that
-          the admin is back. Private chats continue working.
-        </p>
-
-        <label for="adminToken">
-          Admin control password
-        </label>
-
-        <input
-          id="adminToken"
-          type="password"
-          autocomplete="current-password"
-          placeholder="Enter ADMIN_CONTROL_TOKEN"
-        >
-
-        <button
-          id="saveToken"
-          class="secondary"
-          type="button"
-        >
-          Unlock admin controls
-        </button>
-
-        <!-- TOGGLE SWITCH -->
-
-        <div class="switch-row">
-
-          <div class="switch-copy">
-
-            <strong id="groupModeText">
-              Group messaging is OFF
-            </strong>
-
-            <small id="groupModeHint">
-              The bot will not reply to group messages.
-            </small>
-
-          </div>
-
-          <label
-            class="switch"
-            aria-label="Allow group messaging"
-          >
-
-            <input
-              id="groupToggle"
-              type="checkbox"
-              disabled
-            >
-
-            <span class="slider"></span>
-
-          </label>
-
-        </div>
-
-        <div
-          id="groupMessage"
-          class="message"
-          role="status"
-        ></div>
-
-      </section>
-
-      <!-- MANUAL MESSAGE -->
-
-      <section class="section">
-
-        <h2>Send a private WhatsApp message</h2>
-
-        <label for="phone">
-          Phone number with country code
-        </label>
-
-        <input
-          id="phone"
-          type="tel"
-          inputmode="numeric"
-          placeholder="254712345678"
-          maxlength="15"
-        >
-
-        <label for="message">
-          Message
-        </label>
-
-        <textarea
-          id="message"
-          placeholder="Type a message..."
-        ></textarea>
-
-        <button
-          id="sendMessage"
-          type="button"
-        >
-          Send Message
-        </button>
-
-        <div
-          id="sendResult"
-          class="message"
-          role="status"
-        ></div>
-
-      </section>
-
-      <!-- WHATSAPP PAIRING -->
-
-      <section
-        class="section"
-        id="pairingSection"
-      >
-
-        <h2>Connect WhatsApp</h2>
-
-        <p class="hint">
-          If WhatsApp is not connected, enter your number
-          with country code to request a pairing code,
-          or scan the QR code.
-        </p>
-
-        <label for="pairPhone">
-          WhatsApp phone number with country code
-        </label>
-
-        <input
-          id="pairPhone"
-          type="tel"
-          inputmode="numeric"
-          placeholder="254712345678"
-          maxlength="15"
-        >
-
-        <button
-          id="pairButton"
-          type="button"
-        >
-          Get Pairing Code
-        </button>
-
-        <div
-          id="pairResult"
-          class="message"
-          role="status"
-        ></div>
-
-        <div id="pairCode"></div>
-
-        <p
-          id="pairInstructions"
-          class="hint hidden"
-        >
-          Open WhatsApp → Linked Devices → Link a Device →
-          Link with phone number instead.
-        </p>
-
-        <p
-          class="hint"
-          style="text-align:center;margin-top:20px"
-        >
-          Or scan this QR code using WhatsApp →
-          Linked Devices → Link a Device.
-        </p>
-
-        <img
-          id="qrImage"
-          class="hidden"
-          alt="WhatsApp login QR code"
-        >
-
-      </section>
-
-    </div>
-
-  </main>
-
-  <!-- JAVASCRIPT -->
-
-  <script>
-
-    const $ = id => document.getElementById(id);
-
-    let currentGroupEnabled = false;
-    let adminUnlocked = false;
-
-    // =================================================
-    // STATUS INDICATORS
-    // =================================================
-
-    function setDot(id, state) {
-
-      const el = $(id);
-
-      el.className =
-        'dot' +
-        (
-          state === true
-            ? ' online'
-            : state === false
-              ? ' offline'
-              : ''
-        );
-
-    }
-
-    function showMessage(id, text, good) {
-
-      $(id).textContent = text || '';
-
-      $(id).className =
-        'message ' + (good ? 'good' : 'bad');
-
-    }
-
-    function adminToken() {
-      return $('adminToken').value.trim();
-    }
-
-    // =================================================
-    // UPDATE BOT STATUS
-    // =================================================
-
-    async function refreshStatus() {
-
-      try {
-
-        const response = await fetch(
-          '/status',
-          {
-            cache: 'no-store'
-          }
-        );
-
-        const data = await response.json();
-
-        $('waStatus').textContent =
-          data.connected
-            ? 'WhatsApp Connected'
-            : 'WhatsApp: ' + (data.state || 'not connected');
-
-        setDot('waDot', !!data.connected);
-
-        $('mongoStatus').textContent =
-          'MongoDB: ' +
-          (
-            data.mongoConnected
-              ? 'Connected'
-              : 'Disconnected'
-          );
-
-        setDot('mongoDot', !!data.mongoConnected);
-
-        $('aiStatus').textContent =
-          'Gemini: ' +
-          (
-            data.aiConnected
-              ? 'Working'
-              : data.aiConfigured
-                ? 'Configured; not currently verified'
-                : 'API key missing'
-          );
-
-        setDot('aiDot', !!data.aiConnected);
-
-        // HIDE PAIRING SECTION WHEN CONNECTED
-
-        $('pairingSection').classList.toggle(
-          'hidden',
-          !!data.connected
-        );
-
-        // UPDATE QR CODE
-
-        if (data.qr) {
-
-          $('qrImage').src = data.qr;
-
-          $('qrImage').classList.remove('hidden');
-
-        } else {
-
-          $('qrImage').classList.add('hidden');
-
-        }
-
-        // UPDATE GROUP SWITCH
-
-        currentGroupEnabled =
-          !!data.groupRepliesEnabled;
-
-        $('groupToggle').checked =
-          currentGroupEnabled;
-
-        updateGroupText();
-
-      } catch (error) {
-
-        $('waStatus').textContent =
-          'Could not load status: ' + error.message;
-
-        setDot('waDot', false);
-
-      }
-
-    }
-
-    // =================================================
-    // GROUP SWITCH TEXT
-    // =================================================
-
-    function updateGroupText() {
-
-      $('groupModeText').textContent =
-        'Group messaging is ' +
-        (currentGroupEnabled ? 'ON' : 'OFF');
-
-      $('groupModeHint').textContent =
-        currentGroupEnabled
-          ? 'The bot can reply to messages in your joined groups.'
-          : 'The bot will not reply to group messages.';
-
-    }
-
-    // =================================================
-    // ADMIN AUTHENTICATION
-    // =================================================
-
-    $('saveToken').addEventListener(
-      'click',
-      async () => {
-
-        if (!adminToken()) {
-
-          showMessage(
-            'groupMessage',
-            'Enter your admin control password first.',
-            false
-          );
-
-          return;
-
-        }
-
-        try {
-
-          const response = await fetch(
-            '/api/group-settings',
-            {
-              cache: 'no-store',
-
-              headers: {
-                'x-admin-token': adminToken()
-              }
-            }
-          );
-
-          if (!response.ok) {
-            throw new Error('Could not read group settings.');
-          }
-
-          adminUnlocked = true;
-
-          $('groupToggle').disabled = false;
-
-          showMessage(
-            'groupMessage',
-            'Admin controls unlocked on this page. You can now change group messaging.',
-            true
-          );
-
-        } catch (error) {
-
-          showMessage(
-            'groupMessage',
-            error.message,
-            false
-          );
-
-        }
-
-      }
-    );
-
-    // =================================================
-    // GROUP MESSAGING ON/OFF
-    // =================================================
-
-    $('groupToggle').addEventListener(
-      'change',
-      async event => {
-
-        if (!adminUnlocked || !adminToken()) {
-
-          event.target.checked =
-            currentGroupEnabled;
-
-          showMessage(
-            'groupMessage',
-            'Unlock admin controls with your password first.',
-            false
-          );
-
-          return;
-
-        }
-
-        const requested = event.target.checked;
-
-        event.target.disabled = true;
-
-        showMessage(
-          'groupMessage',
-          requested
-            ? 'Turning ON and sending the announcement to your groups...'
-            : 'Turning OFF and notifying your groups...',
-          true
-        );
-
-        try {
-
-          const response = await fetch(
-            '/api/group-toggle',
-            {
-              method: 'POST',
-
-              headers: {
-                'Content-Type': 'application/json',
-                'x-admin-token': adminToken()
-              },
-
-              body: JSON.stringify({
-                enabled: requested
-              })
-            }
-          );
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(
-              data.error || 'Could not change group mode.'
-            );
-          }
-
-          currentGroupEnabled = data.enabled;
-
-          event.target.checked =
-            currentGroupEnabled;
-
-          updateGroupText();
-
-          const a = data.announcement;
-
-          const detail = a
-            ? ` Announcement sent: ${a.sent}/${a.total} groups; failed: ${a.failed}.`
-            : '';
-
-          showMessage(
-            'groupMessage',
-            data.message + detail,
-            true
-          );
-
-        } catch (error) {
-
-          event.target.checked =
-            currentGroupEnabled;
-
-          showMessage(
-            'groupMessage',
-            error.message,
-            false
-          );
-
-        } finally {
-
-          event.target.disabled = false;
-
-        }
-
-      }
-    );
-
-    // =================================================
-    // SEND PRIVATE MESSAGE
-    // =================================================
-
-    $('sendMessage').addEventListener(
-      'click',
-      async () => {
-
-        const phone =
-          $('phone').value.trim();
-
-        const message =
-          $('message').value.trim();
-
-        if (!/^\d{10,15}$/.test(phone)) {
-
-          return showMessage(
-            'sendResult',
-            'Enter a valid phone number with country code, without +.',
-            false
-          );
-
-        }
-
-        if (!message) {
-
-          return showMessage(
-            'sendResult',
-            'Type a message first.',
-            false
-          );
-
-        }
-
-        $('sendMessage').disabled = true;
-
-        try {
-
-          const response = await fetch(
-            '/send',
-            {
-              method: 'POST',
-
-              headers: {
-                'Content-Type': 'application/json'
-              },
-
-              body: JSON.stringify({
-                to: phone,
-                message
-              })
-            }
-          );
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(
-              data.error || 'Message could not be sent.'
-            );
-          }
-
-          showMessage(
-            'sendResult',
-            data.message || 'Message sent successfully.',
-            true
-          );
-
-          $('message').value = '';
-
-        } catch (error) {
-
-          showMessage(
-            'sendResult',
-            error.message,
-            false
-          );
-
-        } finally {
-
-          $('sendMessage').disabled = false;
-
-        }
-
-      }
-    );
-
-    // =================================================
-    // REQUEST WHATSAPP PAIRING CODE
-    // =================================================
-
-    $('pairButton').addEventListener(
-      'click',
-      async () => {
-
-        const phone =
-          $('pairPhone').value.trim();
-
-        if (!/^\d{10,15}$/.test(phone)) {
-
-          return showMessage(
-            'pairResult',
-            'Enter a valid number with country code, without +.',
-            false
-          );
-
-        }
-
-        $('pairButton').disabled = true;
-
-        $('pairCode').textContent = '';
-
-        try {
-
-          const response = await fetch(
-            '/request-pairing?phone=' +
-            encodeURIComponent(phone)
-          );
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(
-              data.error || 'Pairing failed.'
-            );
-          }
-
-          $('pairCode').textContent =
-            data.code;
-
-          $('pairInstructions').classList.remove(
-            'hidden'
-          );
-
-          showMessage(
-            'pairResult',
-            'Pairing code generated successfully.',
-            true
-          );
-
-        } catch (error) {
-
-          showMessage(
-            'pairResult',
-            error.message,
-            false
-          );
-
-        } finally {
-
-          $('pairButton').disabled = false;
-
-        }
-
-      }
-    );
-
-    // =================================================
-    // AUTOMATIC STATUS REFRESH
-    // =================================================
-
-    refreshStatus();
-
-    setInterval(refreshStatus, 5000);
-
-  </script>
-
+<main class="wrap">
+
+<div class="panel">
+<h1>NONCHALANT_Q WhatsApp Bot</h1>
+<p class="subtitle">Multi-account AI WhatsApp management dashboard</p>
+
+<div class="status"><span id="mongoDot" class="dot"></span><span id="mongoStatus">MongoDB: Checking...</span></div>
+<div class="status"><span id="aiDot" class="dot"></span><span id="aiStatus">Gemini AI: Checking...</span></div>
+
+<div class="stats">
+ <div class="stat"><small>Linked accounts</small><strong id="accountCount">0</strong></div>
+ <div class="stat"><small>Connected accounts</small><strong id="connectedCount">0</strong></div>
+ <div class="stat"><small>Bot uptime</small><strong id="uptime">0s</strong></div>
+ <div class="stat"><small>Bot status</small><strong id="botStatus">Checking</strong></div>
+</div>
+<p class="hint" id="startedAt"></p>
+</div>
+
+<!-- ADMIN AUTH -->
+
+<div class="panel">
+<h2>Admin authentication</h2>
+<p class="hint">Enter your ADMIN_CONTROL_TOKEN to unlock dashboard controls. Leave the password blank if no token is configured on the server.</p>
+
+<label>Admin control password</label>
+<input id="adminToken" type="password" placeholder="Enter admin password">
+
+<button id="unlockButton" class="secondary">Unlock dashboard</button>
+<div id="authMessage" class="message"></div>
+</div>
+
+<!-- BOT POWER -->
+
+<div class="panel">
+<h2>Bot power control</h2>
+<p class="hint">Controls automatic AI replies across all linked WhatsApp accounts.</p>
+
+<div class="switch-row">
+ <div class="switch-copy">
+  <strong id="botPowerText">Bot is OFF</strong>
+  <small id="botPowerHint">Automatic AI replies are disabled.</small>
+ </div>
+ <label class="switch">
+  <input id="botToggle" type="checkbox" disabled>
+  <span class="slider"></span>
+ </label>
+</div>
+<div id="botMessage" class="message"></div>
+</div>
+
+<!-- GROUP MESSAGING -->
+
+<div class="panel">
+<h2>Group messaging control</h2>
+<p class="hint">When ON, Manny can reply to messages in groups across all linked accounts. When OFF, group replies are disabled. Private conversations remain available when the bot is ON.</p>
+
+<div class="switch-row">
+ <div class="switch-copy">
+  <strong id="groupText">Group messaging OFF</strong>
+  <small id="groupHint">The bot will not reply to group messages.</small>
+ </div>
+ <label class="switch">
+  <input id="groupToggle" type="checkbox" disabled>
+  <span class="slider"></span>
+ </label>
+</div>
+<div id="groupMessage" class="message"></div>
+</div>
+
+<!-- ACCOUNTS -->
+
+<div class="panel">
+<h2>WhatsApp accounts</h2>
+<p class="hint">Connect multiple WhatsApp accounts. Each account has its own pairing code, QR code and connection status.</p>
+
+<label>Account name (optional)</label>
+<input id="accountLabel" maxlength="40" placeholder="e.g. Personal WhatsApp">
+
+<button id="addAccountButton">+ Link another WhatsApp account</button>
+<div id="accountMessage" class="message"></div>
+
+<div id="accountsList"></div>
+</div>
+
+<!-- MANUAL MESSAGE -->
+
+<div class="panel">
+<h2>Send private WhatsApp message</h2>
+
+<label>Select sending account</label>
+<select id="sendAccount">
+<option value="">Loading accounts...</option>
+</select>
+
+<label>Phone number with country code</label>
+<input id="phone" type="tel" inputmode="numeric" maxlength="15" placeholder="254712345678">
+
+<label>Message</label>
+<textarea id="message" placeholder="Type your message..."></textarea>
+
+<button id="sendButton">Send WhatsApp message</button>
+<div id="sendResult" class="message"></div>
+</div>
+
+<div class="panel">
+<h2>System information</h2>
+<div class="status" id="systemStatus">Loading system information...</div>
+<button class="secondary" id="refreshButton">Refresh dashboard</button>
+</div>
+
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+
+let statusData=null;
+let unlocked=false;
+let busy=false;
+
+function token(){
+ return $('adminToken').value.trim();
+}
+
+function headers(json=false){
+ const h={};
+ if(json)h['Content-Type']='application/json';
+ if(token())h['x-admin-token']=token();
+ return h;
+}
+
+async function api(url,options={}){
+ const response=await fetch(url,{
+  cache:'no-store',
+  ...options,
+  headers:{
+   ...headers(!!options.body),
+   ...(options.headers||{})
+  }
+ });
+
+ const data=await response.json().catch(()=>({}));
+
+ if(!response.ok){
+  throw new Error(data.error||'Request failed.');
+ }
+ return data;
+}
+
+function dot(id,state){
+ $(id).className='dot'+(state?' online':' offline');
+}
+
+function message(id,text,success){
+ $(id).textContent=text||'';
+ $(id).className='message '+(success?'good':'bad');
+}
+
+function formatTime(seconds){
+ seconds=Math.max(0,Number(seconds)||0);
+ const days=Math.floor(seconds/86400);
+ const hours=Math.floor(seconds%86400/3600);
+ const minutes=Math.floor(seconds%3600/60);
+ const secs=Math.floor(seconds%60);
+
+ if(days)return days+'d '+hours+'h '+minutes+'m';
+ if(hours)return hours+'h '+minutes+'m';
+ if(minutes)return minutes+'m '+secs+'s';
+ return secs+'s';
+}
+
+function escapeHTML(value){
+ return String(value??'').replace(/[&<>"']/g,c=>({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+ }[c]));
+}
+
+function updateSwitches(){
+ if(!statusData)return;
+
+ $('botToggle').checked=statusData.botPower;
+ $('groupToggle').checked=statusData.groupMessaging;
+
+ $('botPowerText').textContent=statusData.botPower?'Bot is ON':'Bot is OFF';
+ $('botPowerHint').textContent=statusData.botPower
+  ?'Automatic AI replies are enabled.'
+  :'The admin is back. Automatic AI replies are disabled.';
+
+ $('groupText').textContent=statusData.groupMessaging
+  ?'Group messaging is ON':'Group messaging is OFF';
+
+ $('groupHint').textContent=statusData.groupMessaging
+  ?'The bot can reply to messages in joined groups.'
+  :'The bot will not reply to group messages.';
+
+ $('botStatus').textContent=statusData.botPower?'ON':'OFF';
+}
+
+function updateAccounts(){
+ const accounts=statusData?.accounts||[];
+ $('accountCount').textContent=accounts.length;
+ $('connectedCount').textContent=accounts.filter(a=>a.connected).length;
+
+ const selected=$('sendAccount').value;
+
+ $('sendAccount').innerHTML='<option value="">Select WhatsApp account</option>'+
+ accounts.map(a=>`
+ <option value="${escapeHTML(a.id)}" ${a.connected?'':'disabled'}>
+ ${escapeHTML(a.label)} (${a.connected?'Connected':a.state})
+ </option>`).join('');
+
+ if(accounts.some(a=>a.id===selected&&a.connected)){
+  $('sendAccount').value=selected;
+ }
+
+ $('accountsList').innerHTML=accounts.length?accounts.map(a=>`
+ <div class="account">
+  <h3>${escapeHTML(a.label)}</h3>
+  <div class="account-status">
+   Account ID: ${escapeHTML(a.id)}<br>
+   State: ${escapeHTML(a.state)}<br>
+   Connection: ${a.connected?'Connected':'Not connected'}
+  </div>
+
+  ${a.connected?'':`
+   <label>Phone number with country code</label>
+   <input type="tel" inputmode="numeric" maxlength="15"
+    placeholder="254712345678" id="phone_${escapeHTML(a.id)}">
+
+   <button class="pairAccount" data-id="${escapeHTML(a.id)}">
+    Get pairing code
+   </button>
+
+   <div id="pairResult_${escapeHTML(a.id)}" class="message"></div>
+
+   <div id="code_${escapeHTML(a.id)}" class="pair-code"></div>
+
+   <p class="hint hidden" id="instructions_${escapeHTML(a.id)}">
+    Open WhatsApp → Linked Devices → Link a Device →
+    Link with phone number instead.
+   </p>
+
+   ${a.qr?`
+    <p class="hint">Scan this QR code using WhatsApp → Linked Devices → Link a Device.</p>
+    <img class="qr" src="${a.qr}" alt="WhatsApp QR code">
+   `:''}
+  `}
+
+  <button class="danger disconnectAccount" data-id="${escapeHTML(a.id)}">
+   Disconnect and remove account
+  </button>
+ </div>
+ `).join(''):'<p class="hint">No linked accounts found.</p>';
+}
+
+function renderStatus(data){
+ statusData=data;
+
+ dot('mongoDot',data.mongoConnected);
+ dot('aiDot',data.aiConnected);
+
+ $('mongoStatus').textContent='MongoDB: '+(data.mongoConnected?'Connected':'Disconnected');
+
+ $('aiStatus').textContent='Gemini AI: '+
+ (data.aiConnected?'Working':data.aiConfigured?'Configured, not verified':'API key missing');
+
+ $('uptime').textContent=formatTime(data.uptimeSeconds);
+ $('startedAt').textContent='Started: '+new Date(data.startedAt).toLocaleString();
+
+ updateSwitches();
+ updateAccounts();
+
+ $('botToggle').disabled=!unlocked||busy;
+ $('groupToggle').disabled=!unlocked||busy;
+
+ $('systemStatus').textContent=
+ 'MongoDB: '+(data.mongoConnected?'Connected':'Disconnected')+
+ ' | Gemini configured: '+(data.aiConfigured?'Yes':'No')+
+ ' | Gemini working: '+(data.aiConnected?'Yes':'No')+
+ ' | Accounts: '+data.accounts.length;
+}
+
+async function refreshStatus(){
+ try{
+  const data=await api('/api/status');
+  renderStatus(data);
+ }catch(error){
+  $('systemStatus').textContent=error.message;
+  if(error.message==='Invalid admin token.'){
+   unlocked=false;
+   $('botToggle').disabled=true;
+   $('groupToggle').disabled=true;
+  }
+ }
+}
+
+$('unlockButton').addEventListener('click',async()=>{
+ try{
+  await api('/api/status');
+  unlocked=true;
+  message('authMessage','Admin dashboard unlocked successfully.',true);
+  renderStatus(statusData||{});
+  await refreshStatus();
+ }catch(error){
+  unlocked=false;
+  message('authMessage',error.message,true===false);
+ }
+});
+
+async function changeSwitch(type,enabled){
+ if(!unlocked||busy)return;
+
+ busy=true;
+ $('botToggle').disabled=true;
+ $('groupToggle').disabled=true;
+
+ const endpoint=type==='bot'?'/api/bot-power':'/api/group-messaging';
+ const output=type==='bot'?'botMessage':'groupMessage';
+
+ message(output,'Updating settings...',true);
+
+ try{
+  const data=await api(endpoint,{
+   method:'POST',
+   body:JSON.stringify({enabled})
+  });
+
+  renderStatus(data.status);
+  message(output,data.message,true);
+
+ }catch(error){
+  message(output,error.message,false);
+  await refreshStatus();
+ }finally{
+  busy=false;
+  if(statusData){
+   $('botToggle').disabled=!unlocked;
+   $('groupToggle').disabled=!unlocked;
+  }
+ }
+}
+
+$('botToggle').addEventListener('change',e=>{
+ changeSwitch('bot',e.target.checked);
+});
+
+$('groupToggle').addEventListener('change',e=>{
+ changeSwitch('group',e.target.checked);
+});
+
+// ADD ACCOUNT
+
+$('addAccountButton').addEventListener('click',async()=>{
+ const button=$('addAccountButton');
+ button.disabled=true;
+
+ try{
+  const data=await api('/api/accounts',{
+   method:'POST',
+   body:JSON.stringify({label:$('accountLabel').value.trim()})
+  });
+
+  message('accountMessage',data.message,true);
+  $('accountLabel').value='';
+  await refreshStatus();
+ }catch(error){
+  message('accountMessage',error.message,false);
+ }finally{
+  button.disabled=false;
+ }
+});
+
+// ACCOUNT ACTIONS
+
+$('accountsList').addEventListener('click',async e=>{
+ const pair=e.target.closest('.pairAccount');
+ const disconnect=e.target.closest('.disconnectAccount');
+
+ if(pair){
+  const id=pair.dataset.id;
+  const phone=$('phone_'+id)?.value.trim();
+
+  if(!/^\d{10,15}$/.test(phone||'')){
+   message('pairResult_'+id,'Enter a valid number with country code.',false);
+   return;
+  }
+
+  pair.disabled=true;
+
+  try{
+   const data=await api('/api/accounts/'+encodeURIComponent(id)+'/pair',{
+    method:'POST',
+    body:JSON.stringify({phone})
+   });
+
+   $('code_'+id).textContent=data.code;
+   $('instructions_'+id).classList.remove('hidden');
+   message('pairResult_'+id,'Pairing code generated successfully.',true);
+  }catch(error){
+   message('pairResult_'+id,error.message,false);
+  }finally{
+   pair.disabled=false;
+  }
+ }
+
+ if(disconnect){
+  const id=disconnect.dataset.id;
+
+  if(!confirm('Disconnect and permanently remove this WhatsApp account and its saved authentication? You will need to pair it again.'))return;
+
+  disconnect.disabled=true;
+
+  try{
+   const data=await api('/api/accounts/'+encodeURIComponent(id),{
+    method:'DELETE'
+   });
+
+   message('accountMessage',data.message,true);
+   await refreshStatus();
+  }catch(error){
+   message('accountMessage',error.message,false);
+   disconnect.disabled=false;
+  }
+ }
+});
+
+// SEND MESSAGE
+
+$('sendButton').addEventListener('click',async()=>{
+ const accountId=$('sendAccount').value;
+ const phone=$('phone').value.trim();
+ const text=$('message').value.trim();
+
+ if(!accountId)return message('sendResult','Select a connected account.',false);
+ if(!/^\d{10,15}$/.test(phone))return message('sendResult','Enter a valid phone number with country code.',false);
+ if(!text)return message('sendResult','Enter a message first.',false);
+
+ $('sendButton').disabled=true;
+
+ try{
+  const data=await api('/api/send',{
+   method:'POST',
+   body:JSON.stringify({accountId,to:phone,message:text})
+  });
+
+  message('sendResult',data.message,true);
+  $('message').value='';
+ }catch(error){
+  message('sendResult',error.message,false);
+ }finally{
+  $('sendButton').disabled=false;
+ }
+});
+
+$('refreshButton').addEventListener('click',refreshStatus);
+
+refreshStatus();
+setInterval(refreshStatus,5000);
+</script>
 </body>
 </html>
