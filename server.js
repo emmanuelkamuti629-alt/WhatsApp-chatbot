@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -24,10 +25,9 @@ const config = {
 
   geminiKey: process.env.GEMINI_API_KEY,
 
-  // Primary Gemini model
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  geminiModel:
+    process.env.GEMINI_MODEL || 'gemini-2.5-flash',
 
-  // Backup Gemini model
   geminiFallbackModel:
     process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite',
 
@@ -43,7 +43,6 @@ const config = {
     process.env.GEMINI_TEMPERATURE || 0.7
   ),
 
-  // Three attempts per model
   geminiMaxRetries: Number(
     process.env.GEMINI_MAX_RETRIES || 3
   ),
@@ -129,6 +128,16 @@ let activeGeminiModel = null;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
 }
 
 function getGeminiModels() {
@@ -416,10 +425,12 @@ async function requestGeminiModel(model, contents) {
 
       const retryable =
         lastError.retryable === true ||
-        lastError.retryable === undefined &&
         (
-          lastError.name === 'TypeError' ||
-          lastError.name === 'TimeoutError'
+          lastError.retryable === undefined &&
+          (
+            lastError.name === 'TypeError' ||
+            lastError.name === 'TimeoutError'
+          )
         );
 
       error(
@@ -630,7 +641,6 @@ async function generateReply(chatId, userMessage) {
     }
   ];
 
-  // Keep the last 20 messages.
   messageCache.set(
     chatId,
     updatedHistory.slice(-20)
@@ -867,39 +877,423 @@ async function startWhatsApp() {
 }
 
 // ======================================================
-// HTTP ROUTES
+// HOME PAGE - PHONE NUMBER + QR LINKING
 // ======================================================
 
 app.get('/', (req, res) => {
+
+  const botName = escapeHtml(config.botName);
+
   res.send(`
     <!DOCTYPE html>
-    <html>
-      <head>
-        <title>${config.botName}</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-      </head>
+    <html lang="en">
 
-      <body style="font-family:Arial;text-align:center;padding:30px">
+    <head>
 
-        <h2>${config.botName}</h2>
+      <meta charset="UTF-8">
 
-        <p>WhatsApp AI Assistant</p>
+      <meta name="viewport"
+        content="width=device-width, initial-scale=1">
 
-        <p>WhatsApp: ${whatsappConnected ? 'ONLINE' : 'OFFLINE'}</p>
+      <title>${botName}</title>
 
-        <p>Gemini: ${geminiStatus}</p>
+      <style>
 
-        <p>Active model: ${activeGeminiModel || 'Not selected'}</p>
+        * {
+          box-sizing: border-box;
+        }
 
-        <p><a href="/health">Health check</a></p>
+        body {
+          font-family: Arial, sans-serif;
+          background: #f0f2f5;
+          margin: 0;
+          padding: 20px 15px;
+          color: #222;
+        }
 
-        <p><a href="/status">Bot status</a></p>
+        .container {
+          max-width: 450px;
+          margin: 25px auto;
+          background: white;
+          padding: 25px;
+          border-radius: 16px;
+          box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+        }
 
-        <p><a href="/qr">Link Device (QR & Phone)</a></p>
+        h2 {
+          text-align: center;
+          color: #075e54;
+          margin-bottom: 5px;
+        }
 
-        <p><a href="/reset-auth" style="color: red;">Reset WhatsApp Session</a></p>
+        .subtitle {
+          text-align: center;
+          color: #777;
+          margin-bottom: 25px;
+        }
 
-      </body>
+        .section {
+          margin-top: 22px;
+          padding: 18px;
+          border: 1px solid #eee;
+          border-radius: 12px;
+        }
+
+        .section h3 {
+          margin-top: 0;
+        }
+
+        input {
+          width: 100%;
+          padding: 14px;
+          margin: 12px 0;
+          border: 1px solid #ccc;
+          border-radius: 8px;
+          font-size: 16px;
+          outline: none;
+        }
+
+        input:focus {
+          border-color: #075e54;
+        }
+
+        button {
+          width: 100%;
+          padding: 14px;
+          background: #075e54;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-size: 15px;
+          font-weight: bold;
+          cursor: pointer;
+        }
+
+        button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .qr-button {
+          display: block;
+          text-align: center;
+          padding: 14px;
+          background: #128c7e;
+          color: white;
+          text-decoration: none;
+          border-radius: 8px;
+          margin-top: 12px;
+        }
+
+        .code-box {
+          display: none;
+          text-align: center;
+          margin-top: 20px;
+          padding: 20px;
+          background: #e8f5e9;
+          border-radius: 10px;
+        }
+
+        .pairing-code {
+          font-size: 28px;
+          font-weight: bold;
+          letter-spacing: 4px;
+          color: #075e54;
+          margin: 15px 0;
+          overflow-wrap: anywhere;
+        }
+
+        .status {
+          text-align: center;
+          background: #f5f5f5;
+          padding: 15px;
+          border-radius: 8px;
+          margin-top: 20px;
+          line-height: 1.8;
+        }
+
+        .footer {
+          text-align: center;
+          color: #888;
+          font-size: 12px;
+          margin-top: 25px;
+        }
+
+        .message {
+          margin-top: 12px;
+          text-align: center;
+          font-size: 14px;
+          overflow-wrap: anywhere;
+        }
+
+        .small {
+          font-size: 13px;
+          color: #777;
+          line-height: 1.6;
+        }
+
+        a {
+          color: #075e54;
+        }
+
+      </style>
+
+    </head>
+
+    <body>
+
+      <div class="container">
+
+        <h2>🤖 ${botName}</h2>
+
+        <p class="subtitle">
+          WhatsApp AI Assistant
+        </p>
+
+        <!-- PHONE NUMBER LINKING -->
+
+        <div class="section">
+
+          <h3>📱 Link using Phone Number</h3>
+
+          <p class="small">
+            Enter your WhatsApp number with its country code.
+            Do not include the plus sign.
+          </p>
+
+          <form id="pairingForm">
+
+            <input
+              type="tel"
+              id="phone"
+              placeholder="Example: 254712345678"
+              minlength="10"
+              maxlength="15"
+              autocomplete="tel"
+              required
+            >
+
+            <button type="submit" id="pairButton">
+              Generate Pairing Code
+            </button>
+
+          </form>
+
+          <div class="code-box" id="codeBox">
+
+            <p>Your WhatsApp pairing code:</p>
+
+            <div
+              class="pairing-code"
+              id="pairingCode">
+            </div>
+
+            <button
+              type="button"
+              onclick="copyCode()">
+              Copy Pairing Code
+            </button>
+
+            <p class="small">
+              Open WhatsApp → Linked Devices →
+              Link a Device → Link with phone number instead.
+            </p>
+
+            <p class="small">
+              Enter the pairing code displayed above.
+            </p>
+
+          </div>
+
+          <div
+            class="message"
+            id="message"
+            role="status">
+          </div>
+
+        </div>
+
+        <!-- QR LINKING -->
+
+        <div class="section">
+
+          <h3>📷 Link using QR Code</h3>
+
+          <p class="small">
+            Alternatively, scan the QR code using WhatsApp.
+          </p>
+
+          <a class="qr-button" href="/qr">
+            Open WhatsApp QR Code
+          </a>
+
+        </div>
+
+        <!-- BOT STATUS -->
+
+        <div class="status">
+
+          <strong>Bot Status</strong>
+
+          <p>
+            WhatsApp:
+            ${whatsappConnected ? '🟢 ONLINE' : '🔴 OFFLINE'}
+          </p>
+
+          <p>
+            Gemini: ${escapeHtml(geminiStatus)}
+          </p>
+
+          <p>
+            Active model:
+            ${escapeHtml(activeGeminiModel || 'Not selected')}
+          </p>
+
+          <p>
+            MongoDB:
+            ${db ? '🟢 CONNECTED' : '🔴 DISCONNECTED'}
+          </p>
+
+        </div>
+
+        <!-- LINKS -->
+
+        <div class="section">
+
+          <p>
+            <a href="/health">Health Check</a>
+          </p>
+
+          <p>
+            <a href="/status">Full Bot Status</a>
+          </p>
+
+        </div>
+
+        <div class="footer">
+          Powered by WhatsApp & Gemini AI
+        </div>
+
+      </div>
+
+      <script>
+
+        const form = document.getElementById('pairingForm');
+
+        const button = document.getElementById('pairButton');
+
+        const message = document.getElementById('message');
+
+        const codeBox = document.getElementById('codeBox');
+
+        const codeDisplay = document.getElementById('pairingCode');
+
+        form.addEventListener('submit', async (event) => {
+
+          event.preventDefault();
+
+          const phone = document.getElementById('phone')
+            .value.replace(/\\D/g, '');
+
+          if (phone.length < 10 || phone.length > 15) {
+
+            message.style.color = 'red';
+
+            message.textContent =
+              'Enter a valid international phone number.';
+
+            return;
+          }
+
+          button.disabled = true;
+
+          button.textContent = 'Generating code...';
+
+          message.style.color = '#555';
+
+          message.textContent =
+            'Connecting to WhatsApp. Please wait...';
+
+          codeBox.style.display = 'none';
+
+          try {
+
+            const response = await fetch('/request-pairing', {
+
+              method: 'POST',
+
+              headers: {
+                'Content-Type': 'application/json'
+              },
+
+              body: JSON.stringify({
+                phone: phone
+              })
+
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+
+              throw new Error(
+                data.error || 'Pairing request failed.'
+              );
+
+            }
+
+            codeDisplay.textContent = data.pairingCode;
+
+            codeBox.style.display = 'block';
+
+            message.style.color = 'green';
+
+            message.textContent =
+              'Pairing code generated successfully!';
+
+          } catch (err) {
+
+            message.style.color = 'red';
+
+            message.textContent = err.message;
+
+          } finally {
+
+            button.disabled = false;
+
+            button.textContent = 'Generate Pairing Code';
+
+          }
+
+        });
+
+        async function copyCode() {
+
+          const code = codeDisplay.textContent;
+
+          try {
+
+            await navigator.clipboard.writeText(code);
+
+            message.style.color = 'green';
+
+            message.textContent = 'Pairing code copied!';
+
+          } catch {
+
+            message.style.color = 'red';
+
+            message.textContent =
+              'Please copy the pairing code manually.';
+
+          }
+
+        }
+
+      </script>
+
+    </body>
+
     </html>
   `);
 });
@@ -909,12 +1303,14 @@ app.get('/', (req, res) => {
 // ======================================================
 
 app.get('/health', (req, res) => {
+
   const ready =
     Boolean(db) &&
     whatsappConnected &&
     geminiStatus === 'CONNECTED';
 
   res.status(ready ? 200 : 503).json({
+
     success: ready,
 
     bot: config.botName,
@@ -932,6 +1328,7 @@ app.get('/health', (req, res) => {
       : 'DISCONNECTED',
 
     geminiError: geminiLastError
+
   });
 });
 
@@ -940,7 +1337,9 @@ app.get('/health', (req, res) => {
 // ======================================================
 
 app.get('/status', (req, res) => {
+
   res.json({
+
     bot: config.botName,
 
     whatsappConnected,
@@ -960,324 +1359,168 @@ app.get('/status', (req, res) => {
     pairingInProgress,
 
     qrAvailable: Boolean(currentQR)
+
   });
 });
 
 // ======================================================
-// WHATSAPP QR CODE & PHONE PAIRING
+// WHATSAPP QR CODE
 // ======================================================
 
 app.get('/qr', async (req, res) => {
+
   try {
-    // If already connected, show a success message
+
     if (whatsappConnected) {
-      return res.send(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>WhatsApp Connected</title>
-          </head>
-          <body style="text-align:center;font-family:Arial;padding:20px">
-            <h2>WhatsApp is already connected.</h2>
-            <p>You can close this page.</p>
-            <a href="/">Go to Dashboard</a>
-          </body>
-        </html>
-      `);
+      return res.send('WhatsApp is already connected.');
     }
 
-    // Generate QR image if available
-    let qrImageHtml = '';
-    if (currentQR) {
-      const image = await QRCode.toDataURL(currentQR);
-      qrImageHtml = `
-        <h2 style="margin-top: 0;">Scan with WhatsApp</h2>
-        <img src="${image}" style="width:300px;max-width:90%; border: 1px solid #ddd; padding: 10px; border-radius: 8px;">
-        <p style="color: #666; font-size: 14px;">Open WhatsApp → Linked devices → Link a device.</p>
-        <p style="color: #666; font-size: 14px;">Refresh this page if the QR code expires.</p>
-      `;
-    } else {
-      qrImageHtml = `
-        <h2 style="margin-top: 0; color: #ff9800;">Waiting for QR Code...</h2>
-        <p style="color: #666;">The QR code is not available yet. Please wait a few seconds and refresh.</p>
-      `;
+    if (!currentQR) {
+
+      return res.status(404).send(
+        'QR code is not available yet. Wait for WhatsApp to generate one.'
+      );
+
     }
+
+    const image = await QRCode.toDataURL(currentQR);
 
     res.send(`
+
       <!DOCTYPE html>
+
       <html>
+
         <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Link WhatsApp Device</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              text-align: center;
-              padding: 20px;
-              background-color: #f9f9f9;
-              color: #333;
-            }
-            .container {
-              max-width: 500px;
-              margin: 0 auto;
-              background: white;
-              padding: 30px;
-              border-radius: 10px;
-              box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            }
-            .divider {
-              display: flex;
-              align-items: center;
-              text-align: center;
-              margin: 30px 0;
-              color: #999;
-            }
-            .divider::before, .divider::after {
-              content: '';
-              flex: 1;
-              border-bottom: 1px solid #ddd;
-            }
-            .divider:not(:empty)::before {
-              margin-right: .25em;
-            }
-            .divider:not(:empty)::after {
-              margin-left: .25em;
-            }
-            input[type="tel"] {
-              width: 100%;
-              padding: 12px;
-              margin: 10px 0;
-              border: 1px solid #ccc;
-              border-radius: 5px;
-              box-sizing: border-box;
-              font-size: 16px;
-            }
-            button {
-              width: 100%;
-              padding: 12px;
-              background-color: #25D366;
-              color: white;
-              border: none;
-              border-radius: 5px;
-              font-size: 16px;
-              cursor: pointer;
-              font-weight: bold;
-              margin-top: 10px;
-            }
-            button:hover {
-              background-color: #1DA851;
-            }
-            button:disabled {
-              background-color: #ccc;
-              cursor: not-allowed;
-            }
-            #pairing-result {
-              margin-top: 20px;
-              font-weight: bold;
-              font-size: 18px;
-              word-break: break-all;
-            }
-            .error { color: #d9534f; }
-            .success { color: #5cb85c; }
-          </style>
+
+          <meta name="viewport"
+            content="width=device-width, initial-scale=1">
+
+          <title>WhatsApp QR Code</title>
+
         </head>
-        <body>
-          <div class="container">
-            
-            ${qrImageHtml}
 
-            <div class="divider">OR</div>
+        <body style="
+          text-align:center;
+          font-family:Arial;
+          padding:20px;
+        ">
 
-            <h3>Link with Phone Number</h3>
-            <form id="pairingForm">
-              <input 
-                type="tel" 
-                id="phoneInput" 
-                placeholder="Enter phone number (e.g., 1234567890)" 
-                required 
-              />
-              <button type="submit" id="pairBtn">Get Pairing Code</button>
-            </form>
+          <h2>Scan with WhatsApp</h2>
 
-            <div id="pairing-result"></div>
+          <img
+            src="${image}"
+            style="width:300px;max-width:90%"
+          >
 
-          </div>
+          <p>
+            Open WhatsApp → Linked Devices → Link a Device.
+          </p>
 
-          <script>
-            document.getElementById('pairingForm').addEventListener('submit', async (e) => {
-              e.preventDefault();
-              
-              const phoneInput = document.getElementById('phoneInput').value;
-              const btn = document.getElementById('pairBtn');
-              const resultDiv = document.getElementById('pairing-result');
-              
-              // Clean phone number (remove non-digits)
-              const phone = phoneInput.replace(/\\D/g, '');
-              
-              if (phone.length < 10) {
-                resultDiv.innerHTML = '<span class="error">Please enter a valid phone number including country code.</span>';
-                return;
-              }
+          <p>
+            Refresh this page if the QR code expires.
+          </p>
 
-              // Update UI
-              btn.disabled = true;
-              btn.innerText = 'Requesting...';
-              resultDiv.innerHTML = '<span style="color: #666;">Please wait...</span>';
+          <a href="/">Back to Homepage</a>
 
-              try {
-                const response = await fetch('/request-pairing', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify({ phone })
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                  resultDiv.innerHTML = \`
-                    <p class="success">Your Pairing Code:</p>
-                    <h2 style="letter-spacing: 2px; font-size: 32px; margin: 10px 0;">\${data.pairingCode}</h2>
-                    <p style="font-size: 14px; color: #666; font-weight: normal;">
-                      Enter this code on your phone: <br>
-                      WhatsApp → Linked Devices → Link with phone number.
-                    </p>
-                  \`;
-                } else {
-                  resultDiv.innerHTML = \`<span class="error">\${data.error}</span>\`;
-                }
-              } catch (err) {
-                resultDiv.innerHTML = '<span class="error">Network error. Please try again.</span>';
-              } finally {
-                btn.disabled = false;
-                btn.innerText = 'Get Pairing Code';
-              }
-            });
-          </script>
         </body>
+
       </html>
+
     `);
 
   } catch (err) {
-    error('QR_ROUTE', 'Could not generate QR code page.', err);
-    res.status(500).send('Could not generate QR code page.');
+
+    error('QR_ROUTE', 'Could not generate QR code.', err);
+
+    res.status(500).send('Could not generate QR code.');
+
   }
 });
 
 // ======================================================
-// RESET WHATSAPP SESSION (NEW)
-// ======================================================
-
-app.get('/reset-auth', async (req, res) => {
-  try {
-    info('RESET_AUTH', 'User requested WhatsApp session reset.');
-
-    if (!authCollection) {
-      return res.status(500).send('Database not connected.');
-    }
-
-    // 1. Delete all credentials from MongoDB
-    await authCollection.deleteMany({});
-    
-    // 2. Clear local memory and QR code
-    currentQR = null;
-    whatsappConnected = false;
-    pairingInProgress = false;
-
-    // 3. Force close the existing socket if it exists
-    if (whatsappSocket) {
-      try {
-        whatsappSocket.end(undefined);
-      } catch (e) {
-        // Ignore errors when force-closing
-      }
-      whatsappSocket = null;
-    }
-
-    // 4. Clear any pending reconnect timers
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-
-    success('RESET_AUTH', 'WhatsApp session cleared. Restarting connection.');
-
-    // 5. Restart the WhatsApp connection to generate a fresh QR code
-    setTimeout(() => {
-      startWhatsApp().catch(err => {
-        error('RESET_AUTH', 'Failed to restart WhatsApp after reset.', err);
-      });
-    }, 1000);
-
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Session Reset</title>
-        </head>
-        <body style="text-align:center;font-family:Arial;padding:20px">
-          <h2>WhatsApp Session Reset Successful</h2>
-          <p>The old credentials have been deleted. The bot is now generating a fresh QR code.</p>
-          <p>Please wait 5-10 seconds, then go to the link page.</p>
-          <a href="/qr" style="display:inline-block; margin-top:20px; padding:10px 20px; background:#25D366; color:white; text-decoration:none; border-radius:5px;">Go to QR / Pairing Page</a>
-        </body>
-      </html>
-    `);
-
-  } catch (err) {
-    error('RESET_AUTH', 'Failed to reset WhatsApp session.', err);
-    res.status(500).send('Failed to reset session: ' + err.message);
-  }
-});
-
-// ======================================================
-// WHATSAPP PAIRING CODE
+// WHATSAPP PHONE NUMBER PAIRING
 // ======================================================
 
 app.post('/request-pairing', async (req, res) => {
+
   try {
+
     const phone = String(req.body.phone || '')
       .replace(/\D/g, '');
 
+    // Validate phone number.
+
     if (!phone || phone.length < 10 || phone.length > 15) {
+
       return res.status(400).json({
+
         success: false,
-        error: 'Provide a valid phone number including country code.'
+
+        error:
+          'Provide a valid phone number including country code.'
+
       });
+
     }
+
+    // Check WhatsApp connection.
 
     if (whatsappConnected) {
+
       return res.status(400).json({
+
         success: false,
+
         error: 'WhatsApp is already connected.'
+
       });
+
     }
+
+    // Check socket availability.
 
     if (!whatsappSocket) {
+
       return res.status(503).json({
+
         success: false,
-        error: 'WhatsApp socket is not ready. Try again shortly.'
+
+        error:
+          'WhatsApp socket is not ready. Wait a few seconds and try again.'
+
       });
+
     }
 
+    // Prevent simultaneous pairing requests.
+
     if (pairingInProgress) {
+
       return res.status(409).json({
+
         success: false,
-        error: 'A pairing request is already in progress.'
+
+        error:
+          'A pairing request is already in progress.'
+
       });
+
     }
 
     pairingInProgress = true;
+
+    currentQR = null;
 
     info(
       'WHATSAPP_PAIRING',
       'Requesting WhatsApp pairing code.'
     );
 
-    const code = await whatsappSocket.requestPairingCode(phone);
+    // Generate pairing code.
+
+    const code =
+      await whatsappSocket.requestPairingCode(phone);
 
     success(
       'WHATSAPP_PAIRING',
@@ -1285,38 +1528,55 @@ app.post('/request-pairing', async (req, res) => {
     );
 
     res.json({
+
       success: true,
+
       pairingCode: code
+
     });
 
   } catch (err) {
+
     error(
       'WHATSAPP_PAIRING',
-      'Could not generate pairing code.',
+      'Could not generate WhatsApp pairing code.',
       err
     );
 
     res.status(500).json({
+
       success: false,
+
       error: err.message
+
     });
 
   } finally {
+
     pairingInProgress = false;
+
   }
+
 });
 
 // ======================================================
-// SEND WHATSAPP MESSAGE
+// SEND WHATSAPP MESSAGE API
 // ======================================================
 
 app.post('/send', async (req, res) => {
+
   try {
+
     if (!whatsappConnected || !whatsappSocket) {
+
       return res.status(503).json({
+
         success: false,
+
         error: 'WhatsApp is not connected.'
+
       });
+
     }
 
     const phone = String(req.body.phone || '')
@@ -1324,17 +1584,30 @@ app.post('/send', async (req, res) => {
 
     const message = String(req.body.message || '').trim();
 
-    if (!phone || !message) {
+    if (
+      !phone ||
+      phone.length < 10 ||
+      phone.length > 15 ||
+      !message
+    ) {
+
       return res.status(400).json({
+
         success: false,
-        error: 'Phone number and message are required.'
+
+        error:
+          'Provide a valid phone number and message.'
+
       });
+
     }
 
     const jid = `${phone}@s.whatsapp.net`;
 
     await whatsappSocket.sendMessage(jid, {
+
       text: message
+
     });
 
     success(
@@ -1344,11 +1617,15 @@ app.post('/send', async (req, res) => {
     );
 
     res.json({
+
       success: true,
+
       message: 'Message sent successfully.'
+
     });
 
   } catch (err) {
+
     error(
       'WHATSAPP_SEND',
       'Message sending failed.',
@@ -1356,10 +1633,15 @@ app.post('/send', async (req, res) => {
     );
 
     res.status(500).json({
+
       success: false,
+
       error: err.message
+
     });
+
   }
+
 });
 
 // ======================================================
@@ -1367,13 +1649,20 @@ app.post('/send', async (req, res) => {
 // ======================================================
 
 async function startServer() {
+
   info('STARTUP', 'BOT STARTUP BEGIN');
 
   info('CONFIG', `Bot: ${config.botName}`);
 
-  info('CONFIG', `Gemini primary model: ${config.geminiModel}`);
+  info(
+    'CONFIG',
+    `Gemini primary model: ${config.geminiModel}`
+  );
 
-  info('CONFIG', `Gemini fallback model: ${config.geminiFallbackModel}`);
+  info(
+    'CONFIG',
+    `Gemini fallback model: ${config.geminiFallbackModel}`
+  );
 
   info(
     'CONFIG',
@@ -1395,30 +1684,43 @@ async function startServer() {
     `Gemini retries: ${config.geminiMaxRetries}`
   );
 
+  // Connect MongoDB first.
+
   await connectMongoDB();
 
+  // Start HTTP server.
+
   app.listen(config.port, '0.0.0.0', () => {
+
     success('HTTP_SERVER', 'Server running.', {
+
       port: config.port
+
     });
+
   });
 
-  // Gemini verification runs independently.
+  // Test Gemini independently.
+
   testGemini().catch(err => {
+
     error(
       'GEMINI_TEST',
       'Background Gemini test failed.',
       err
     );
+
   });
 
-  // WhatsApp starts even if Gemini is unavailable.
+  // Start WhatsApp.
+
   await startWhatsApp();
 
   success(
     'STARTUP',
     'Startup sequence completed.'
   );
+
 }
 
 // ======================================================
@@ -1426,37 +1728,50 @@ async function startServer() {
 // ======================================================
 
 async function shutdown(signal) {
+
   warn(
     'SHUTDOWN',
     `Received ${signal}. Shutting down...`
   );
 
   try {
+
     if (reconnectTimer) {
+
       clearTimeout(reconnectTimer);
+
       reconnectTimer = null;
+
     }
 
     if (whatsappSocket) {
+
       whatsappSocket.end(undefined);
+
       whatsappSocket = null;
+
     }
 
     if (mongoClient) {
+
       await mongoClient.close();
+
     }
 
     success('SHUTDOWN', 'Shutdown completed.');
 
   } catch (err) {
+
     error(
       'SHUTDOWN',
       'Shutdown error.',
       err
     );
+
   }
 
   process.exit(0);
+
 }
 
 // ======================================================
@@ -1468,6 +1783,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 process.on('unhandledRejection', (reason) => {
+
   error(
     'UNHANDLED_REJECTION',
     'Unhandled promise rejection.',
@@ -1475,9 +1791,11 @@ process.on('unhandledRejection', (reason) => {
       ? reason
       : new Error(String(reason))
   );
+
 });
 
 process.on('uncaughtException', (err) => {
+
   error(
     'UNCAUGHT_EXCEPTION',
     'Uncaught exception.',
@@ -1485,6 +1803,7 @@ process.on('uncaughtException', (err) => {
   );
 
   process.exit(1);
+
 });
 
 // ======================================================
@@ -1492,6 +1811,7 @@ process.on('uncaughtException', (err) => {
 // ======================================================
 
 startServer().catch(err => {
+
   error(
     'STARTUP_FATAL',
     'Bot startup failed.',
@@ -1499,4 +1819,5 @@ startServer().catch(err => {
   );
 
   process.exit(1);
+
 });
