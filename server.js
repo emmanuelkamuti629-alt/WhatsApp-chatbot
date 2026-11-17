@@ -31,14 +31,110 @@ const config = {
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   geminiBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
 
-  botName: process.env.BOT_NAME || 'Smart Assistant',
+  botName: 'Manny',
 
-  personality:
-    process.env.BOT_PERSONALITY ||
-    'You are a helpful, intelligent, friendly and accurate WhatsApp assistant. Give natural, conversational answers. Understand English, Kiswahili and common Kenyan expressions. Keep simple replies short and useful.',
+  personality: `
+You are Manny. Your name is ALWAYS Manny.
+
+IDENTITY:
+- Your name is Manny.
+- If asked "Who are you?", answer "I'm Manny 😊"
+- If asked "We ni nani?", answer "Mimi ni Manny 😊"
+- If asked "Unaitwa nani?", answer "Naitwa Manny 😊"
+- If asked "What's your name?", answer "I'm Manny 😊"
+- Never introduce yourself as an AI, chatbot, language model or virtual assistant.
+- Never introduce yourself as a generic WhatsApp assistant.
+- Do not invent another name.
+
+PERSONALITY:
+- Be friendly, confident, natural and approachable.
+- Talk like a normal person having a WhatsApp conversation.
+- Be smart, humorous and helpful when appropriate.
+- Avoid sounding robotic or formal.
+- Do not repeatedly introduce yourself.
+
+SHORT REPLIES:
+- Keep every reply short, brief and complete.
+- Normally reply using one sentence.
+- Use a maximum of two short sentences when necessary.
+- Avoid long paragraphs and unnecessary explanations.
+- Answer exactly what the person asks.
+- Do not repeat the user's message.
+- Do not add unnecessary questions at the end.
+- Do not give lengthy introductions.
+- Do not explain simple greetings.
+
+LANGUAGES:
+- Understand and communicate in English.
+- Understand and communicate in Kiswahili.
+- Understand Kenyan Sheng.
+- Understand common Kenyan slang, abbreviations and informal expressions.
+- Understand common Gikuyu expressions where possible.
+- Understand mixed English, Swahili and Sheng.
+- Respond naturally in the language used by the sender.
+- If someone uses Sheng, respond naturally in Sheng.
+- If someone uses Kiswahili, respond in Kiswahili.
+- If someone uses English, respond in English.
+- You may mix languages naturally when appropriate.
+
+CONVERSATION EXAMPLES:
+
+User: Hi
+Reply: Hey! 😊
+
+User: Hello
+Reply: Hey, what's up? 😊
+
+User: Sema
+Reply: Niko fiti! Wewe je?
+
+User: Uko aje?
+Reply: Niko poa, wewe?
+
+User: Mambo?
+Reply: Safi kabisa! 😁
+
+User: We ni nani?
+Reply: Mimi ni Manny 😊
+
+User: Wewe ni nani?
+Reply: Mimi ni Manny 😊
+
+User: Unaitwa nani?
+Reply: Naitwa Manny 😊
+
+User: Jina lako nani?
+Reply: Naitwa Manny 😊
+
+User: Who are you?
+Reply: I'm Manny 😊
+
+User: What's your name?
+Reply: I'm Manny 😊
+
+User: Asante
+Reply: Karibu! 😊
+
+User: Niaje bro?
+Reply: Fiti sana bro! 😁
+
+User: Uko wapi?
+Reply: Niko hapa tu 😊
+
+IMPORTANT:
+Always maintain the identity Manny.
+Always be brief, natural and relevant.
+Never produce unnecessarily long WhatsApp messages.
+`,
 
   maxHistory: Math.max(1, Number(process.env.MAX_HISTORY_MESSAGES || 10)),
-  maxTokens: Number(process.env.OPENAI_MAX_TOKENS || 500),
+
+  // Keep Gemini responses short.
+  maxTokens: Math.min(
+    250,
+    Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))
+  ),
+
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7)
 };
 
@@ -374,11 +470,15 @@ async function verifyGemini() {
       model: config.geminiModel,
       messages: [
         {
+          role: 'system',
+          content: config.personality
+        },
+        {
           role: 'user',
-          content: 'Reply with exactly: GEMINI_OK'
+          content: 'What is your name?'
         }
       ],
-      max_tokens: 20,
+      max_tokens: 30,
       temperature: 0
     });
 
@@ -468,6 +568,50 @@ function classifyGeminiError(error) {
 }
 
 // =====================================================
+// MANNY IDENTITY RECOGNITION
+// =====================================================
+
+function normalizeMessage(message) {
+  return String(message || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[?!.,'"`]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function getIdentityReply(message) {
+  const text = normalizeMessage(message);
+
+  const identityPatterns = [
+    /^who are you$/,
+    /^who is this$/,
+    /^what is your name$/,
+    /^whats your name$/,
+    /^what are you called$/,
+    /^what should i call you$/,
+    /^tell me your name$/,
+    /^we ni nani$/,
+    /^wewe ni nani$/,
+    /^unaitwa nani$/,
+    /^unaitwa nani wewe$/,
+    /^jina lako nani$/,
+    /^jina lako ni nani$/,
+    /^nani wewe$/,
+    /^we ni nani wewe$/,
+    /^are you manny$/,
+    /^manny ni wewe$/,
+    /^what is your identity$/,
+    /^who am i talking to$/
+  ];
+
+  if (identityPatterns.some(pattern => pattern.test(text))) {
+    return 'Mimi ni Manny 😊';
+  }
+
+  return null;
+}
+
+// =====================================================
 // AI REPLY GENERATION
 // =====================================================
 
@@ -486,6 +630,38 @@ async function generateReply(chatId, userMessage) {
     return 'Please send a text message.';
   }
 
+  // ALWAYS USE MANNY'S FIXED IDENTITY
+
+  const identityReply = getIdentityReply(userMessage);
+
+  if (identityReply) {
+    const history = historyCache.get(chatId) || [];
+
+    history.push(
+      {
+        role: 'user',
+        content: userMessage
+      },
+      {
+        role: 'assistant',
+        content: identityReply
+      }
+    );
+
+    historyCache.set(
+      chatId,
+      history.slice(-config.maxHistory * 2)
+    );
+
+    log(
+      'SUCCESS',
+      'BOT_IDENTITY',
+      'Identity question answered using fixed bot name: Manny.'
+    );
+
+    return identityReply;
+  }
+
   if (!aiClient) {
     log(
       'ERROR',
@@ -493,7 +669,7 @@ async function generateReply(chatId, userMessage) {
       'Gemini client is not configured. Check GEMINI_API_KEY.'
     );
 
-    return '⚠️ The AI service is not configured yet. Please contact the bot administrator.';
+    return '⚠️ The service is temporarily unavailable.';
   }
 
   const history = historyCache.get(chatId) || [];
@@ -524,7 +700,7 @@ async function generateReply(chatId, userMessage) {
       temperature: config.temperature
     });
 
-    const reply =
+    let reply =
       response.choices?.[0]?.message?.content?.trim();
 
     if (!reply) {
@@ -540,6 +716,20 @@ async function generateReply(chatId, userMessage) {
       );
 
       throw new Error('Gemini returned an empty response');
+    }
+
+    // SAFETY LIMIT FOR WHATSAPP REPLY LENGTH
+
+    const MAX_REPLY_LENGTH = 500;
+
+    if (reply.length > MAX_REPLY_LENGTH) {
+      const shortened = reply.slice(0, MAX_REPLY_LENGTH);
+
+      const lastSentence = shortened.lastIndexOf('.');
+
+      reply = lastSentence > 200
+        ? shortened.slice(0, lastSentence + 1)
+        : shortened.trim();
     }
 
     history.push(
@@ -584,7 +774,7 @@ async function generateReply(chatId, userMessage) {
       classifyGeminiError(error)
     );
 
-    return '⚠️ Sorry, the AI service is temporarily unavailable. Please try again shortly.';
+    return '⚠️ Sorry, the service is temporarily unavailable. Try again shortly.';
   }
 }
 
@@ -651,21 +841,13 @@ async function connectToWhatsApp() {
 
     sock = makeWASocket({
       auth: state,
-
       logger: baileysLogger,
-
       printQRInTerminal: false,
-
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
-
       markOnlineOnConnect: true,
-
       syncFullHistory: false,
-
       connectTimeoutMs: 60000,
-
       defaultQueryTimeoutMs: 60000,
-
       keepAliveIntervalMs: 25000
     });
 
@@ -738,7 +920,6 @@ async function connectToWhatsApp() {
         isConnecting = false;
 
         connectionState = 'open';
-
         reconnectAttempts = 0;
 
         latestQRDataUrl = null;
@@ -747,7 +928,7 @@ async function connectToWhatsApp() {
         log(
           'SUCCESS',
           'WHATSAPP_CONNECTION',
-          'WhatsApp connected successfully. Bot is online.'
+          'WhatsApp connected successfully. Manny is online.'
         );
       }
 
@@ -834,8 +1015,6 @@ async function connectToWhatsApp() {
 
     // =================================================
     // RECEIVE WHATSAPP MESSAGES
-    // PRIVATE CHATS ONLY
-    // REPLY DIRECTLY TO ORIGINAL MESSAGE
     // =================================================
 
     sock.ev.on('messages.upsert', async event => {
@@ -849,31 +1028,28 @@ async function connectToWhatsApp() {
 
       for (const msg of event.messages || []) {
         try {
-          // IGNORE MESSAGES SENT BY THE BOT ITSELF
-
           if (!msg.message || msg.key.fromMe) continue;
 
           const chatId = msg.key.remoteJid;
 
-          if (!chatId) {
-            continue;
-          }
+          if (!chatId) continue;
 
-          // =================================================
-          // IMPORTANT: BLOCK ALL WHATSAPP GROUP MESSAGES
-          // =================================================
+          // IGNORE ALL WHATSAPP GROUPS
 
-          if (chatId.endsWith('@g.us')) {
+          if (
+            chatId.endsWith('@g.us') ||
+            msg.key.participant
+          ) {
             log(
               'INFO',
-              'GROUP_FILTER',
-              `Group message ignored: ${maskJid(chatId)}`
+              'WHATSAPP_GROUP',
+              'Group message ignored. Manny only replies to private chats.'
             );
 
             continue;
           }
 
-          // IGNORE STATUS, NEWSLETTERS AND BROADCASTS
+          // IGNORE STATUS AND NEWSLETTERS
 
           if (
             chatId === 'status@broadcast' ||
@@ -883,13 +1059,11 @@ async function connectToWhatsApp() {
             log(
               'INFO',
               'WHATSAPP_INCOMING',
-              'Ignored status, newsletter or broadcast message.'
+              'Ignored status, newsletter, broadcast or invalid chat message.'
             );
 
             continue;
           }
-
-          // EXTRACT MESSAGE TEXT
 
           const message = msg.message;
 
@@ -912,8 +1086,6 @@ async function connectToWhatsApp() {
             continue;
           }
 
-          // DO NOT LOG PRIVATE MESSAGE CONTENTS
-
           log(
             'SUCCESS',
             'WHATSAPP_INCOMING',
@@ -928,14 +1100,14 @@ async function connectToWhatsApp() {
           );
 
           // =================================================
-          // SEND REPLY DIRECTLY TO THE ORIGINAL MESSAGE
+          // SEND DIRECT QUOTED REPLY
           // =================================================
 
           if (sock && isConnected) {
             log(
               'INFO',
               'WHATSAPP_SEND',
-              `Sending quoted AI reply to ${maskJid(chatId)}.`
+              `Sending quoted reply to ${maskJid(chatId)}.`
             );
 
             await sock.sendMessage(
@@ -1036,6 +1208,9 @@ app.get('/health', (req, res) => {
     whatsappReady: isConnected,
     whatsappState: connectionState,
 
+    groupRepliesEnabled: false,
+    quotedRepliesEnabled: true,
+
     pairingReady: !!sock && !isConnected,
     qrPending: !!latestQRDataUrl
   });
@@ -1077,7 +1252,7 @@ app.get('/qr', (req, res) => {
       </head>
       <body style="font-family:Arial;text-align:center;padding:60px 15px;background:#f0f2f5">
         <h1 style="color:#25d366">WhatsApp Connected!</h1>
-        <h3>Your AI bot is online.</h3>
+        <h3>Manny is online.</h3>
         <a href="/health">Check Bot Status</a>
       </body>
       </html>
