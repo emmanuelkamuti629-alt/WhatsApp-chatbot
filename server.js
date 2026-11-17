@@ -22,14 +22,14 @@ const {
 // =====================================================
 
 const config = {
-  port: process.env.PORT || 3000,
-
+  port: Number(process.env.PORT || 3000),
   mongoUri: process.env.MONGODB_URI,
   mongoDatabase: process.env.MONGODB_DB_NAME || 'whatsapp_bot',
   authId: process.env.WHATSAPP_AUTH_ID || 'main',
 
   geminiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+  geminiBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
 
   botName: process.env.BOT_NAME || 'Smart Assistant',
 
@@ -37,12 +37,89 @@ const config = {
     process.env.BOT_PERSONALITY ||
     'You are a helpful, intelligent, friendly and accurate WhatsApp assistant. Give natural, conversational answers. Understand English, Kiswahili and common Kenyan expressions. Keep simple replies short and useful.',
 
-  maxHistory: Number(process.env.MAX_HISTORY_MESSAGES || 10),
-
+  maxHistory: Math.max(1, Number(process.env.MAX_HISTORY_MESSAGES || 10)),
   maxTokens: Number(process.env.OPENAI_MAX_TOKENS || 500),
-
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7)
 };
+
+// =====================================================
+// LOGGING SYSTEM
+// =====================================================
+
+const startedAt = new Date();
+
+function log(level, step, message, details) {
+  const timestamp = new Date().toISOString();
+  const prefix = `[${timestamp}] [${level}] [${step}]`;
+
+  const method =
+    level === 'ERROR' ? 'error' :
+    level === 'WARN' ? 'warn' : 'log';
+
+  if (details !== undefined) {
+    console[method](prefix, message, safeDetails(details));
+  } else {
+    console[method](prefix, message);
+  }
+}
+
+function safeDetails(value) {
+  if (value instanceof Error) return getErrorDetails(value);
+  if (typeof value === 'string') return value;
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getErrorDetails(error) {
+  const result = {
+    name: error?.name,
+    message: error?.message,
+    status: error?.status || error?.statusCode,
+    code: error?.code,
+    type: error?.type,
+    param: error?.param
+  };
+
+  if (error?.response?.status) {
+    result.responseStatus = error.response.status;
+  }
+
+  if (error?.error) {
+    result.providerError = error.error;
+  }
+
+  if (error?.response?.data) {
+    result.responseData = error.response.data;
+  }
+
+  if (typeof error?.toJSON === 'function') {
+    try {
+      result.sdkError = error.toJSON();
+    } catch {}
+  }
+
+  return result;
+}
+
+function maskPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+
+  if (digits.length <= 4) return '****';
+
+  return `${digits.slice(0, 3)}******${digits.slice(-2)}`;
+}
+
+function maskJid(jid) {
+  if (!jid) return 'unknown';
+
+  const number = String(jid).split('@')[0];
+
+  return `${maskPhone(number)}@${String(jid).split('@')[1] || 'unknown'}`;
+}
 
 // =====================================================
 // GLOBAL VARIABLES
@@ -57,7 +134,9 @@ const historyCache = new NodeCache({
   checkperiod: 600
 });
 
-const logger = pino({ level: 'silent' });
+const baileysLogger = pino({
+  level: process.env.BAILEYS_LOG_LEVEL || 'silent'
+});
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
   serverSelectionTimeoutMS: 10000,
@@ -65,14 +144,13 @@ const mongoClient = new MongoClient(config.mongoUri || '', {
   maxPoolSize: 10
 });
 
-let db = null;
 let authCollection = null;
-
 let sock = null;
 
 let isConnected = false;
 let isConnecting = false;
 let mongoConnected = false;
+let aiConnected = false;
 
 let latestQRDataUrl = null;
 let pairingCode = null;
@@ -80,18 +158,18 @@ let pairingCode = null;
 let connectionState = 'starting';
 let reconnectTimer = null;
 let reconnectAttempts = 0;
+let shuttingDown = false;
 
 // =====================================================
-// GEMINI AI CONFIGURATION
+// GEMINI CLIENT
 // =====================================================
 
 const aiClient = config.geminiKey
   ? new OpenAI({
       apiKey: config.geminiKey,
-      baseURL:
-        'https://generativelanguage.googleapis.com/v1beta/openai/',
+      baseURL: config.geminiBaseURL,
       timeout: 30000,
-      maxRetries: 2
+      maxRetries: 1
     })
   : null;
 
@@ -110,6 +188,10 @@ function deserialize(data) {
 }
 
 async function saveMongoData(id, data) {
+  if (!authCollection) {
+    throw new Error('MongoDB auth collection is not initialized');
+  }
+
   await authCollection.updateOne(
     {
       _id: `${config.authId}:${id}`
@@ -128,6 +210,10 @@ async function saveMongoData(id, data) {
 }
 
 async function readMongoData(id) {
+  if (!authCollection) {
+    throw new Error('MongoDB auth collection is not initialized');
+  }
+
   const result = await authCollection.findOne({
     _id: `${config.authId}:${id}`
   });
@@ -136,9 +222,19 @@ async function readMongoData(id) {
 }
 
 async function useMongoDBAuthState() {
+  log('INFO', 'AUTH', 'Loading WhatsApp credentials from MongoDB');
+
   const storedCreds = await readMongoData('creds');
 
   const creds = storedCreds || initAuthCreds();
+
+  log(
+    'SUCCESS',
+    'AUTH',
+    storedCreds
+      ? 'Existing WhatsApp credentials found'
+      : 'No saved credentials; new WhatsApp pairing required'
+  );
 
   const keys = {
     async get(type, ids) {
@@ -191,12 +287,213 @@ async function useMongoDBAuthState() {
 }
 
 // =====================================================
+// GEMINI DIAGNOSTICS
+// =====================================================
+
+async function verifyGemini() {
+  if (!config.geminiKey) {
+    aiConnected = false;
+
+    log(
+      'ERROR',
+      'GEMINI_CONFIG',
+      'GEMINI_API_KEY is missing. AI replies cannot work.'
+    );
+
+    return false;
+  }
+
+  if (!aiClient) {
+    aiConnected = false;
+
+    log(
+      'ERROR',
+      'GEMINI_CONFIG',
+      'Gemini client was not created.'
+    );
+
+    return false;
+  }
+
+  log(
+    'INFO',
+    'GEMINI_TEST',
+    `Checking API key and model access. Model: ${config.geminiModel}`
+  );
+
+  try {
+    const models = await aiClient.models.list();
+
+    const modelIds = [];
+
+    for await (const model of models) {
+      if (model?.id) {
+        modelIds.push(model.id);
+      }
+    }
+
+    log(
+      'SUCCESS',
+      'GEMINI_MODELS',
+      `Gemini API key accepted. ${modelIds.length} model(s) returned.`
+    );
+
+    const matchingModel = modelIds.find(id =>
+      id === config.geminiModel ||
+      id.endsWith(`/${config.geminiModel}`)
+    );
+
+    if (matchingModel) {
+      log(
+        'SUCCESS',
+        'GEMINI_MODEL',
+        `Configured model found: ${matchingModel}`
+      );
+    } else {
+      log(
+        'WARN',
+        'GEMINI_MODEL',
+        `Configured model "${config.geminiModel}" was not found in the model list.`
+      );
+
+      log(
+        'INFO',
+        'GEMINI_MODEL',
+        'Models returned by Gemini:',
+        modelIds
+      );
+    }
+
+    log(
+      'INFO',
+      'GEMINI_TEST',
+      `Sending test request to ${config.geminiModel}`
+    );
+
+    const test = await aiClient.chat.completions.create({
+      model: config.geminiModel,
+      messages: [
+        {
+          role: 'user',
+          content: 'Reply with exactly: GEMINI_OK'
+        }
+      ],
+      max_tokens: 20,
+      temperature: 0
+    });
+
+    const testText =
+      test.choices?.[0]?.message?.content;
+
+    if (!testText) {
+      throw new Error(
+        'Gemini test completed but returned an empty message'
+      );
+    }
+
+    aiConnected = true;
+
+    log(
+      'SUCCESS',
+      'GEMINI_TEST',
+      `Gemini test request succeeded. Response: ${String(testText).slice(0, 80)}`
+    );
+
+    return true;
+
+  } catch (error) {
+    aiConnected = false;
+
+    log(
+      'ERROR',
+      'GEMINI_TEST',
+      'Gemini verification failed:',
+      getErrorDetails(error)
+    );
+
+    return false;
+  }
+}
+
+// =====================================================
+// GEMINI ERROR CLASSIFICATION
+// =====================================================
+
+function classifyGeminiError(error) {
+  const status = Number(
+    error?.status || error?.statusCode || 0
+  );
+
+  const message = String(
+    error?.message || ''
+  ).toLowerCase();
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    message.includes('api key') ||
+    message.includes('permission')
+  ) {
+    return 'AUTH_OR_PERMISSION: Check GEMINI_API_KEY and Google AI Studio permissions.';
+  }
+
+  if (
+    status === 404 ||
+    (message.includes('model') && message.includes('not found'))
+  ) {
+    return `MODEL_NOT_FOUND: The configured model "${config.geminiModel}" may be unavailable or incorrectly named.`;
+  }
+
+  if (
+    status === 429 ||
+    message.includes('quota') ||
+    message.includes('rate limit')
+  ) {
+    return 'QUOTA_OR_RATE_LIMIT: Gemini quota or rate limit reached.';
+  }
+
+  if (status >= 500) {
+    return 'GEMINI_SERVER_ERROR: Google Gemini returned a server error.';
+  }
+
+  if (
+    error?.code === 'ETIMEDOUT' ||
+    error?.code === 'ECONNRESET' ||
+    message.includes('timeout')
+  ) {
+    return 'NETWORK_OR_TIMEOUT: Request timed out or connection was interrupted.';
+  }
+
+  return 'UNKNOWN_GEMINI_ERROR: Check the full error details above.';
+}
+
+// =====================================================
 // AI REPLY GENERATION
 // =====================================================
 
 async function generateReply(chatId, userMessage) {
-  if (!userMessage || !aiClient) {
-    return "⚠️ I'm having trouble thinking right now. Please try again.";
+  const started = Date.now();
+
+  const shortChat = maskJid(chatId);
+
+  if (!userMessage || !String(userMessage).trim()) {
+    log(
+      'WARN',
+      'AI_REPLY',
+      `Empty message ignored for ${shortChat}`
+    );
+
+    return 'Please send a text message.';
+  }
+
+  if (!aiClient) {
+    log(
+      'ERROR',
+      'AI_REPLY',
+      'Gemini client is not configured. Check GEMINI_API_KEY.'
+    );
+
+    return '⚠️ The AI service is not configured yet. Please contact the bot administrator.';
   }
 
   const history = historyCache.get(chatId) || [];
@@ -213,6 +510,12 @@ async function generateReply(chatId, userMessage) {
     }
   ];
 
+  log(
+    'INFO',
+    'AI_REPLY',
+    `Sending message to Gemini. Chat: ${shortChat}; model: ${config.geminiModel}; history: ${history.length}`
+  );
+
   try {
     const response = await aiClient.chat.completions.create({
       model: config.geminiModel,
@@ -225,43 +528,78 @@ async function generateReply(chatId, userMessage) {
       response.choices?.[0]?.message?.content?.trim();
 
     if (!reply) {
+      log(
+        'ERROR',
+        'AI_REPLY',
+        'Gemini returned an empty response.',
+        {
+          finishReason: response.choices?.[0]?.finish_reason,
+          responseId: response.id,
+          model: response.model
+        }
+      );
+
       throw new Error('Gemini returned an empty response');
     }
 
-    history.push({
-      role: 'user',
-      content: userMessage
-    });
-
-    history.push({
-      role: 'assistant',
-      content: reply
-    });
+    history.push(
+      {
+        role: 'user',
+        content: userMessage
+      },
+      {
+        role: 'assistant',
+        content: reply
+      }
+    );
 
     historyCache.set(
       chatId,
       history.slice(-config.maxHistory * 2)
     );
 
+    aiConnected = true;
+
+    log(
+      'SUCCESS',
+      'AI_REPLY',
+      `Gemini generated reply in ${Date.now() - started}ms. Response length: ${reply.length}`
+    );
+
     return reply;
 
   } catch (error) {
-    console.error(
-      'Gemini AI Error:',
-      error.status || '',
-      error.message
+    aiConnected = false;
+
+    log(
+      'ERROR',
+      'AI_REPLY',
+      'Gemini request failed:',
+      getErrorDetails(error)
     );
 
-    return "⚠️ I'm having trouble thinking right now. Please try again.";
+    log(
+      'ERROR',
+      'AI_DIAGNOSIS',
+      classifyGeminiError(error)
+    );
+
+    return '⚠️ Sorry, the AI service is temporarily unavailable. Please try again shortly.';
   }
 }
 
 // =====================================================
-// WHATSAPP CONNECTION
+// WHATSAPP RECONNECTION
 // =====================================================
 
-function scheduleReconnect(delay = 4000) {
-  if (reconnectTimer) return;
+function scheduleReconnect(delay = 5000) {
+  if (shuttingDown || reconnectTimer) return;
+
+  log(
+    'WARN',
+    'WHATSAPP_RECONNECT',
+    `Reconnect scheduled in ${Math.round(delay / 1000)} seconds.`
+  );
 
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -269,28 +607,52 @@ function scheduleReconnect(delay = 4000) {
   }, delay);
 }
 
+// =====================================================
+// WHATSAPP CONNECTION
+// =====================================================
+
 async function connectToWhatsApp() {
-  if (isConnecting || isConnected) return;
+  if (shuttingDown || isConnecting || isConnected) {
+    log(
+      'WARN',
+      'WHATSAPP_START',
+      'Connection attempt skipped: already connected, connecting or shutting down.'
+    );
+
+    return;
+  }
 
   isConnecting = true;
   connectionState = 'connecting';
 
-  try {
-    if (!mongoConnected) {
-      throw new Error('MongoDB is not connected');
-    }
+  log(
+    'INFO',
+    'WHATSAPP_START',
+    'Starting WhatsApp connection.'
+  );
 
-    console.log('Restoring WhatsApp session from MongoDB...');
+  try {
+    if (!mongoConnected || !authCollection) {
+      throw new Error(
+        'MongoDB is not connected; cannot load WhatsApp authentication.'
+      );
+    }
 
     const {
       state,
       saveCreds
     } = await useMongoDBAuthState();
 
+    log(
+      'INFO',
+      'WHATSAPP_SOCKET',
+      'Creating Baileys WhatsApp socket.'
+    );
+
     sock = makeWASocket({
       auth: state,
 
-      logger,
+      logger: baileysLogger,
 
       printQRInTerminal: false,
 
@@ -307,13 +669,29 @@ async function connectToWhatsApp() {
       keepAliveIntervalMs: 25000
     });
 
+    // SAVE WHATSAPP CREDENTIALS
+
     sock.ev.on('creds.update', async () => {
       try {
         await saveCreds();
+
+        log(
+          'SUCCESS',
+          'WHATSAPP_AUTH_SAVE',
+          'WhatsApp credentials saved to MongoDB.'
+        );
+
       } catch (error) {
-        console.error('Credential save error:', error.message);
+        log(
+          'ERROR',
+          'WHATSAPP_AUTH_SAVE',
+          'Failed to save WhatsApp credentials:',
+          getErrorDetails(error)
+        );
       }
     });
+
+    // CONNECTION STATUS
 
     sock.ev.on('connection.update', async update => {
       const {
@@ -329,19 +707,36 @@ async function connectToWhatsApp() {
             margin: 2
           });
 
-          console.log('WhatsApp QR code generated.');
+          log(
+            'SUCCESS',
+            'WHATSAPP_QR',
+            'New WhatsApp QR code generated.'
+          );
+
         } catch (error) {
-          console.error('QR generation error:', error.message);
+          log(
+            'ERROR',
+            'WHATSAPP_QR',
+            'QR generation failed:',
+            getErrorDetails(error)
+          );
         }
       }
 
       if (connection === 'connecting') {
         connectionState = 'connecting';
-        console.log('Connecting to WhatsApp...');
+
+        log(
+          'INFO',
+          'WHATSAPP_CONNECTION',
+          'Baileys is connecting to WhatsApp.'
+        );
       }
 
       if (connection === 'open') {
         isConnected = true;
+        isConnecting = false;
+
         connectionState = 'open';
 
         reconnectAttempts = 0;
@@ -349,14 +744,17 @@ async function connectToWhatsApp() {
         latestQRDataUrl = null;
         pairingCode = null;
 
-        console.log('================================');
-        console.log('WHATSAPP BOT IS ONLINE!');
-        console.log('MongoDB session restored.');
-        console.log('================================');
+        log(
+          'SUCCESS',
+          'WHATSAPP_CONNECTION',
+          'WhatsApp connected successfully. Bot is online.'
+        );
       }
 
       if (connection === 'close') {
         isConnected = false;
+        isConnecting = false;
+
         connectionState = 'disconnected';
 
         latestQRDataUrl = null;
@@ -365,13 +763,26 @@ async function connectToWhatsApp() {
         const statusCode =
           lastDisconnect?.error?.output?.statusCode;
 
-        console.log('WhatsApp connection closed:', statusCode);
+        const disconnectMessage =
+          lastDisconnect?.error?.message;
+
+        log(
+          'ERROR',
+          'WHATSAPP_CONNECTION',
+          'WhatsApp connection closed.',
+          {
+            statusCode,
+            disconnectMessage
+          }
+        );
 
         sock = null;
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log(
-            'WhatsApp session logged out. Preparing fresh login.'
+          log(
+            'WARN',
+            'WHATSAPP_LOGOUT',
+            'WhatsApp reports logged out. Clearing this authId session.'
           );
 
           try {
@@ -379,16 +790,22 @@ async function connectToWhatsApp() {
               authId: config.authId
             });
 
-            console.log('Old authentication data cleared.');
-
             connectionState = 'needs_pairing';
+
+            log(
+              'SUCCESS',
+              'WHATSAPP_LOGOUT',
+              'Old WhatsApp session data cleared from MongoDB.'
+            );
 
             scheduleReconnect(3000);
 
           } catch (error) {
-            console.error(
-              'Could not reset authentication:',
-              error.message
+            log(
+              'ERROR',
+              'WHATSAPP_LOGOUT',
+              'Could not clear old WhatsApp session:',
+              getErrorDetails(error)
             );
 
             scheduleReconnect(10000);
@@ -404,8 +821,10 @@ async function connectToWhatsApp() {
             30000
           );
 
-          console.log(
-            `Reconnecting in ${delay / 1000} seconds...`
+          log(
+            'WARN',
+            'WHATSAPP_RECONNECT',
+            `Connection lost. Attempt ${reconnectAttempts}; retry delay ${delay}ms.`
           );
 
           scheduleReconnect(delay);
@@ -413,11 +832,20 @@ async function connectToWhatsApp() {
       }
     });
 
-    // Receive incoming WhatsApp messages
+    // =================================================
+    // RECEIVE WHATSAPP MESSAGES
+    // =================================================
+
     sock.ev.on('messages.upsert', async event => {
       if (event.type !== 'notify') return;
 
-      for (const msg of event.messages) {
+      log(
+        'INFO',
+        'WHATSAPP_INCOMING',
+        `WhatsApp notified ${event.messages?.length || 0} incoming message(s).`
+      );
+
+      for (const msg of event.messages || []) {
         try {
           if (!msg.message || msg.key.fromMe) continue;
 
@@ -428,6 +856,12 @@ async function connectToWhatsApp() {
             chatId === 'status@broadcast' ||
             chatId.endsWith('@newsletter')
           ) {
+            log(
+              'INFO',
+              'WHATSAPP_INCOMING',
+              'Ignored status, newsletter or invalid chat message.'
+            );
+
             continue;
           }
 
@@ -442,29 +876,64 @@ async function connectToWhatsApp() {
             message.buttonsResponseMessage?.selectedDisplayText ||
             message.listResponseMessage?.title;
 
-          if (!userMessage || !userMessage.trim()) continue;
+          if (!userMessage || !userMessage.trim()) {
+            log(
+              'WARN',
+              'WHATSAPP_INCOMING',
+              `Message from ${maskJid(chatId)} had no supported text or caption.`
+            );
 
-          console.log(
-            `Incoming message from ${chatId}: ${userMessage.slice(0, 80)}`
+            continue;
+          }
+
+          // Do not log private message contents.
+
+          log(
+            'SUCCESS',
+            'WHATSAPP_INCOMING',
+            `Received text message from ${maskJid(chatId)}. Length: ${userMessage.length}`
           );
+
+          // GENERATE AI REPLY
 
           const reply = await generateReply(
             chatId,
             userMessage.trim()
           );
 
+          // SEND REPLY
+
           if (sock && isConnected) {
+            log(
+              'INFO',
+              'WHATSAPP_SEND',
+              `Sending AI reply to ${maskJid(chatId)}.`
+            );
+
             await sock.sendMessage(chatId, {
               text: reply
             });
 
-            console.log('AI reply sent successfully.');
+            log(
+              'SUCCESS',
+              'WHATSAPP_SEND',
+              `Reply sent successfully to ${maskJid(chatId)}.`
+            );
+
+          } else {
+            log(
+              'ERROR',
+              'WHATSAPP_SEND',
+              'Reply generated but WhatsApp disconnected before it could be sent.'
+            );
           }
 
         } catch (error) {
-          console.error(
-            'Message processing error:',
-            error.message
+          log(
+            'ERROR',
+            'WHATSAPP_MESSAGE',
+            'Message processing failed:',
+            getErrorDetails(error)
           );
         }
       }
@@ -472,17 +941,24 @@ async function connectToWhatsApp() {
 
     isConnecting = false;
 
+    log(
+      'SUCCESS',
+      'WHATSAPP_SOCKET',
+      'WhatsApp socket created and event handlers registered.'
+    );
+
   } catch (error) {
     isConnecting = false;
-
-    console.error(
-      'WhatsApp startup error:',
-      error.message
-    );
+    sock = null;
 
     connectionState = 'reconnecting';
 
-    sock = null;
+    log(
+      'ERROR',
+      'WHATSAPP_START',
+      'WhatsApp startup failed:',
+      getErrorDetails(error)
+    );
 
     scheduleReconnect(10000);
   }
@@ -499,7 +975,7 @@ app.get('/', (req, res) => {
     return res.sendFile(indexPath);
   }
 
-  res.redirect('/qr');
+  return res.redirect('/qr');
 });
 
 // =====================================================
@@ -510,12 +986,22 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     bot: config.botName,
+
+    uptimeSeconds: Math.floor(process.uptime()),
+
+    startedAt: startedAt.toISOString(),
+
     aiProvider: 'Google Gemini',
     aiModel: config.geminiModel,
+
     aiConfigured: !!aiClient,
+    aiConnected,
+
     mongoConnected,
+
     whatsappReady: isConnected,
     whatsappState: connectionState,
+
     pairingReady: !!sock && !isConnected,
     qrPending: !!latestQRDataUrl
   });
@@ -529,16 +1015,21 @@ app.get('/status', (req, res) => {
   res.json({
     connected: isConnected,
     state: connectionState,
+
     mongoConnected,
+
+    aiConfigured: !!aiClient,
+    aiConnected,
+
     qrPending: !!latestQRDataUrl,
     qr: latestQRDataUrl,
+
     pairingCode
   });
 });
 
 // =====================================================
 // WHATSAPP LOGIN PAGE
-// BOTH QR AND PHONE NUMBER
 // =====================================================
 
 app.get('/qr', (req, res) => {
@@ -551,9 +1042,8 @@ app.get('/qr', (req, res) => {
         <title>WhatsApp Connected</title>
       </head>
       <body style="font-family:Arial;text-align:center;padding:60px 15px;background:#f0f2f5">
-        <h1 style="color:#25d366">✅ WhatsApp Connected!</h1>
+        <h1 style="color:#25d366">WhatsApp Connected!</h1>
         <h3>Your AI bot is online.</h3>
-        <p>You can close this page.</p>
         <a href="/health">Check Bot Status</a>
       </body>
       </html>
@@ -653,6 +1143,10 @@ app.get('/qr', (req, res) => {
     MongoDB: Checking...
   </p>
 
+  <p class="status" id="ai">
+    Gemini: Checking...
+  </p>
+
   <div class="card">
 
     <h2>Login with Phone Number</h2>
@@ -706,8 +1200,10 @@ async function getPairingCode() {
 
   if (!/^\\d{10,15}$/.test(phone)) {
     message.style.color = 'red';
+
     message.innerText =
       'Enter a valid number with country code, without +.';
+
     return;
   }
 
@@ -733,7 +1229,8 @@ async function getPairingCode() {
 
     message.style.color = 'green';
 
-    message.innerText = 'Pairing code generated successfully!';
+    message.innerText =
+      'Pairing code generated successfully!';
 
     document.getElementById('instructions').style.display = 'block';
 
@@ -750,8 +1247,7 @@ async function getPairingCode() {
   }
 }
 
-// Automatically update the login page
-// without refreshing the whole page.
+// AUTOMATIC STATUS UPDATE
 
 async function updateStatus() {
 
@@ -767,7 +1263,18 @@ async function updateStatus() {
         : 'WhatsApp: ' + data.state;
 
     document.getElementById('mongo').innerText =
-      'MongoDB: ' + (data.mongoConnected ? 'Connected' : 'Disconnected');
+      'MongoDB: ' +
+      (data.mongoConnected ? 'Connected' : 'Disconnected');
+
+    document.getElementById('ai').innerText =
+      'Gemini: ' +
+      (
+        data.aiConnected
+          ? 'Working'
+          : data.aiConfigured
+            ? 'Configured; test not confirmed'
+            : 'API key missing'
+      );
 
     if (data.connected) {
       window.location.reload();
@@ -812,21 +1319,48 @@ app.get('/request-pairing', async (req, res) => {
 
   const phone = String(req.query.phone || '').replace(/\D/g, '');
 
+  log(
+    'INFO',
+    'PAIRING_REQUEST',
+    `Pairing requested for ${maskPhone(phone)}.`
+  );
+
   if (!/^\d{10,15}$/.test(phone)) {
+
+    log(
+      'WARN',
+      'PAIRING_REQUEST',
+      'Rejected invalid phone number format.'
+    );
+
     return res.status(400).json({
       error: 'Enter a valid number with country code, without +.'
     });
   }
 
   if (isConnected) {
+
+    log(
+      'WARN',
+      'PAIRING_REQUEST',
+      'WhatsApp is already connected.'
+    );
+
     return res.status(409).json({
       error: 'WhatsApp is already connected.'
     });
   }
 
   if (!sock) {
+
+    log(
+      'WARN',
+      'PAIRING_REQUEST',
+      'WhatsApp socket is not ready.'
+    );
+
     return res.status(503).json({
-      error: 'WhatsApp is still starting. Try again shortly.'
+      error: 'WhatsApp is still starting. Wait a few seconds and try again.'
     });
   }
 
@@ -836,7 +1370,11 @@ app.get('/request-pairing', async (req, res) => {
 
     pairingCode = code.match(/.{1,4}/g).join('-');
 
-    console.log('Pairing code generated.');
+    log(
+      'SUCCESS',
+      'PAIRING_REQUEST',
+      `Pairing code generated for ${maskPhone(phone)}.`
+    );
 
     return res.json({
       success: true,
@@ -845,10 +1383,15 @@ app.get('/request-pairing', async (req, res) => {
 
   } catch(error) {
 
-    console.error('Pairing code error:', error.message);
+    log(
+      'ERROR',
+      'PAIRING_REQUEST',
+      'Pairing code generation failed:',
+      getErrorDetails(error)
+    );
 
     return res.status(500).json({
-      error: 'Could not generate pairing code. Please try again.'
+      error: `Could not generate pairing code: ${error.message}`
     });
 
   }
@@ -860,29 +1403,50 @@ app.get('/request-pairing', async (req, res) => {
 
 app.post('/send', async (req, res) => {
 
-  const { to, message } = req.body;
+  const { to, message } = req.body || {};
 
   if (!sock || !isConnected) {
+
+    log(
+      'WARN',
+      'SEND_API',
+      'WhatsApp is not connected.'
+    );
+
     return res.status(503).json({
       error: 'WhatsApp is not connected.'
     });
   }
 
   if (!to || !message) {
+
+    log(
+      'WARN',
+      'SEND_API',
+      'Phone number or message is missing.'
+    );
+
     return res.status(400).json({
       error: 'Phone number and message are required.'
     });
   }
 
+  const phone = String(to).replace(/\D/g, '');
+
+  if (!/^\d{10,15}$/.test(phone)) {
+
+    log(
+      'WARN',
+      'SEND_API',
+      'Invalid destination number.'
+    );
+
+    return res.status(400).json({
+      error: 'Invalid phone number.'
+    });
+  }
+
   try {
-
-    const phone = String(to).replace(/\D/g, '');
-
-    if (!/^\d{10,15}$/.test(phone)) {
-      return res.status(400).json({
-        error: 'Invalid phone number.'
-      });
-    }
 
     await sock.sendMessage(
       `${phone}@s.whatsapp.net`,
@@ -891,14 +1455,27 @@ app.post('/send', async (req, res) => {
       }
     );
 
-    res.json({
+    log(
+      'SUCCESS',
+      'SEND_API',
+      `Message sent to ${maskPhone(phone)}.`
+    );
+
+    return res.json({
       success: true,
       message: 'Message sent successfully.'
     });
 
   } catch(error) {
 
-    res.status(500).json({
+    log(
+      'ERROR',
+      'SEND_API',
+      'Message sending failed:',
+      getErrorDetails(error)
+    );
+
+    return res.status(500).json({
       error: error.message
     });
 
@@ -906,18 +1483,73 @@ app.post('/send', async (req, res) => {
 });
 
 // =====================================================
-// START SERVER
+// UNKNOWN ROUTE
 // =====================================================
 
-app.listen(config.port, '0.0.0.0', () => {
+app.use((req, res) => {
 
-  console.log('================================');
-  console.log('WHATSAPP AI CHATBOT SERVER');
-  console.log('================================');
+  log(
+    'WARN',
+    'HTTP_404',
+    `Unknown route: ${req.method} ${req.path}`
+  );
 
-  console.log(`Server running on port ${config.port}`);
+  res.status(404).json({
+    error: 'Route not found.'
+  });
 
-  console.log(`AI Model: ${config.geminiModel}`);
+});
+
+// =====================================================
+// GLOBAL HTTP ERROR HANDLER
+// =====================================================
+
+app.use((error, req, res, next) => {
+
+  log(
+    'ERROR',
+    'HTTP_ERROR',
+    `HTTP error on ${req.method} ${req.path}:`,
+    getErrorDetails(error)
+  );
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  res.status(500).json({
+    error: 'Internal server error.'
+  });
+
+});
+
+// =====================================================
+// START HTTP SERVER
+// =====================================================
+
+const server = app.listen(config.port, '0.0.0.0', () => {
+
+  log(
+    'SUCCESS',
+    'HTTP_SERVER',
+    `Server listening on port ${config.port}.`
+  );
+
+  log('INFO', 'CONFIG', `Bot name: ${config.botName}`);
+
+  log('INFO', 'CONFIG', `Gemini model: ${config.geminiModel}`);
+
+  log(
+    'INFO',
+    'CONFIG',
+    `Gemini API key present: ${!!config.geminiKey}`
+  );
+
+  log(
+    'INFO',
+    'CONFIG',
+    `MongoDB URI present: ${!!config.mongoUri}`
+  );
 
 });
 
@@ -927,21 +1559,41 @@ app.listen(config.port, '0.0.0.0', () => {
 
 async function startBot() {
 
+  log(
+    'INFO',
+    'STARTUP',
+    '========== BOT STARTUP BEGIN =========='
+  );
+
   try {
 
     if (!config.mongoUri) {
-      throw new Error('MONGODB_URI is missing.');
+      throw new Error(
+        'MONGODB_URI is missing in Render Environment.'
+      );
     }
 
     if (!config.geminiKey) {
-      console.warn('GEMINI_API_KEY is missing. AI replies will not work.');
+
+      log(
+        'ERROR',
+        'STARTUP',
+        'GEMINI_API_KEY is missing. AI replies will not work.'
+      );
+
     }
 
-    console.log('Connecting to MongoDB...');
+    // CONNECT MONGODB
+
+    log(
+      'INFO',
+      'MONGODB_CONNECT',
+      'Connecting to MongoDB...'
+    );
 
     await mongoClient.connect();
 
-    db = mongoClient.db(config.mongoDatabase);
+    const db = mongoClient.db(config.mongoDatabase);
 
     authCollection = db.collection('whatsapp_auth');
 
@@ -949,27 +1601,48 @@ async function startBot() {
       authId: 1
     });
 
+    await authCollection.findOne({
+      _id: `${config.authId}:creds`
+    });
+
     mongoConnected = true;
 
-    console.log('MongoDB connected successfully.');
+    log(
+      'SUCCESS',
+      'MONGODB_CONNECT',
+      `MongoDB connected. Database: ${config.mongoDatabase}; collection: whatsapp_auth.`
+    );
 
-    const existingCreds = await readMongoData('creds');
+    // TEST GEMINI
 
-    if (existingCreds && existingCreds.registered) {
-      console.log('Saved WhatsApp credentials found.');
-    } else {
-      console.log('New WhatsApp login required.');
-    }
+    await verifyGemini();
+
+    // CONNECT WHATSAPP
 
     await connectToWhatsApp();
 
-  } catch(error) {
+    log(
+      'INFO',
+      'STARTUP',
+      'Startup sequence completed. WhatsApp connection may still be in progress.'
+    );
 
-    console.error('BOT STARTUP ERROR:', error.message);
+  } catch(error) {
 
     mongoConnected = false;
 
-    process.exit(1);
+    log(
+      'ERROR',
+      'STARTUP',
+      'Fatal startup error:',
+      getErrorDetails(error)
+    );
+
+    log(
+      'ERROR',
+      'STARTUP',
+      'Server remains available for health and log inspection, but services may not work.'
+    );
 
   }
 
@@ -981,30 +1654,108 @@ startBot();
 // GRACEFUL SHUTDOWN
 // =====================================================
 
-async function shutdown() {
+async function shutdown(signal) {
 
-  console.log('Shutting down chatbot...');
+  if (shuttingDown) return;
+
+  shuttingDown = true;
+
+  log(
+    'WARN',
+    'SHUTDOWN',
+    `Received ${signal}. Starting graceful shutdown.`
+  );
 
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
   }
 
   try {
+
     if (sock) {
-      sock.end(undefined);
+      try {
+        sock.end(undefined);
+      } catch(error) {
+        log(
+          'WARN',
+          'SHUTDOWN',
+          'Error closing WhatsApp socket:',
+          getErrorDetails(error)
+        );
+      }
     }
 
     if (mongoConnected) {
+
       await mongoClient.close();
+
+      log(
+        'SUCCESS',
+        'SHUTDOWN',
+        'MongoDB connection closed.'
+      );
+
     }
 
-  } catch(error) {
-    console.error('Shutdown error:', error.message);
-  }
+    server.close(() => {
 
-  process.exit(0);
+      log(
+        'SUCCESS',
+        'SHUTDOWN',
+        'HTTP server closed.'
+      );
+
+      process.exit(0);
+
+    });
+
+    setTimeout(() => process.exit(0), 8000).unref();
+
+  } catch(error) {
+
+    log(
+      'ERROR',
+      'SHUTDOWN',
+      'Shutdown error:',
+      getErrorDetails(error)
+    );
+
+    process.exit(1);
+
+  }
 
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+// =====================================================
+// PROCESS ERROR HANDLERS
+// =====================================================
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('unhandledRejection', reason => {
+
+  log(
+    'ERROR',
+    'UNHANDLED_REJECTION',
+    'Unhandled promise rejection:',
+    reason instanceof Error
+      ? getErrorDetails(reason)
+      : reason
+  );
+
+});
+
+process.on('uncaughtException', error => {
+
+  log(
+    'ERROR',
+    'UNCAUGHT_EXCEPTION',
+    'Uncaught exception:',
+    getErrorDetails(error)
+  );
+
+  process.exit(1);
+
+});
