@@ -2,7 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const makeWASocket = require('@whiskeysockets/baileys').default;
-const { useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+// Added fetchLatestWaWebVersion to fix the pairing rejection error
+const { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const OpenAI = require('openai');
 const NodeCache = require('node-cache');
@@ -71,28 +72,66 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/qr', (req, res) => {
-  if (isConnected) return res.send('<h2 style="text-align:center;font-family:sans-serif;padding:40px;">✅ WhatsApp Connected! You can close this page.</h2>');
+  if (isConnected) {
+    return res.send(`
+      <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f0f2f5;font-family:sans-serif;">
+        <h2 style="color:#25d366;">✅ WhatsApp Connected!<br>You can close this page.</h2>
+      </body>
+    `);
+  }
   
-  let codeHtml = '';
+  let contentHtml = '';
+
   if (pairingCode) {
-    codeHtml = `
-      <div style="background:#fff; padding:20px; border-radius:12px; margin-top:20px; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
-        <h3>Your Pairing Code: <span style="color:#25d366; font-size:28px; letter-spacing:2px;">${pairingCode}</span></h3>
-        <p>1. Open WhatsApp on your phone<br>2. Go to Linked Devices<br>3. Tap "Link a Device"<br>4. Tap "Link with phone number instead"<br>5. Enter this code</p>
+    // Huge pairing code display
+    contentHtml = `
+      <div style="text-align:center; width: 100%;">
+        <h2 style="color:#075e54; margin-bottom:10px;">Your Pairing Code</h2>
+        <div style="font-size:clamp(40px, 12vw, 80px); font-weight:900; color:#128c7e; letter-spacing:5px; margin:20px 0; word-wrap:break-word;">
+          ${pairingCode}
+        </div>
+        <div style="font-size:clamp(16px, 4vw, 22px); color:#3b4a54; line-height:1.6; text-align:left; max-width:500px; margin:0 auto; background:#fff; padding:20px; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+          1. Open WhatsApp on your phone<br>
+          2. Go to <b>Linked Devices</b><br>
+          3. Tap <b>Link a Device</b><br>
+          4. Tap <b>Link with phone number instead</b><br>
+          5. Enter the code above
+        </div>
       </div>
     `;
-  } else if (!isConnected) {
-    codeHtml = `
-      <div style="background:#fff; padding:20px; border-radius:12px; margin-top:20px; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
-        <h3>Want to use a Pairing Code instead?</h3>
-        <input id="phone" type="tel" placeholder="e.g. 254712345678" style="padding:10px; border-radius:6px; border:1px solid #ccc; width:80%; margin-bottom:10px;">
-        <br>
-        <button onclick="getCode()" style="padding:10px 20px; background:#25d366; color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">Get Pairing Code</button>
+  } else if (latestQRDataUrl) {
+    // Huge QR code display (75% of viewport width)
+    contentHtml = `
+      <div style="text-align:center; width: 100%;">
+        <h2 style="color:#075e54; margin-bottom:10px;">Scan with WhatsApp</h2>
+        <p style="color:#667781; font-size:clamp(16px, 4vw, 20px);">Linked Devices → Link a Device</p>
+        <img src="${latestQRDataUrl}" style="width: 75vw; max-width: 400px; height: auto; border:10px solid #fff; border-radius:16px; box-shadow:0 8px 24px rgba(0,0,0,0.15); margin: 20px auto; display:block;" />
+      </div>
+    `;
+  } else {
+    contentHtml = `
+      <div style="text-align:center;">
+        <h2 style="color:#667781;">⏳ Starting up...</h2>
+        <p>Refresh in 3 seconds.</p>
+      </div>
+    `;
+  }
+
+  // If not connected and no pairing code yet, show the input box
+  let inputHtml = '';
+  if (!pairingCode && !isConnected) {
+    inputHtml = `
+      <div style="margin-top:30px; background:#fff; padding:20px; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.05); width:90%; max-width:500px; box-sizing:border-box;">
+        <h3 style="margin-top:0; color:#075e54;">Prefer a Pairing Code?</h3>
+        <p style="font-size:14px; color:#667781;">Enter your phone number with country code (no +).</p>
+        <input id="phone" type="tel" placeholder="e.g. 254712345678" style="padding:15px; border-radius:8px; border:2px solid #ccc; width:100%; box-sizing:border-box; font-size:18px; margin-bottom:15px;">
+        <button onclick="getCode()" style="padding:15px; background:#25d366; color:white; border:none; border-radius:8px; font-size:18px; font-weight:bold; cursor:pointer; width:100%;">Get Code</button>
       </div>
       <script>
         async function getCode() {
           const phone = document.getElementById('phone').value;
-          if(!phone) return alert('Enter phone number with country code (no +)');
+          if(!phone) return alert('Enter phone number with country code');
+          document.querySelector('button').innerText = 'Generating...';
           await fetch('/request-pairing?phone=' + phone);
           setTimeout(() => window.location.reload(), 2000);
         }
@@ -100,14 +139,21 @@ app.get('/qr', (req, res) => {
     `;
   }
 
-  res.send(`<!DOCTYPE html><html><head><title>WhatsApp Login</title>
-<style>body{font-family:sans-serif;text-align:center;padding:20px;background:#f0f2f5} img{border:8px solid #fff;border-radius:12px; max-width:100%;}</style></head>
-<body>
-  <h2>📱 WhatsApp Login</h2>
-  ${latestQRDataUrl ? `<p>Scan with WhatsApp (Linked Devices)</p><img src="${latestQRDataUrl}" />` : '<p>Starting up... Refresh in 3 seconds.</p>'}
-  ${codeHtml}
+  // Full page layout (occupies 3/4 of screen with padding)
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <title>WhatsApp Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="refresh" content="30">
-</body></html>`);
+</head>
+<body style="margin:0; padding:0; background:#f0f2f5; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh;">
+  <div style="width:100%; padding:20px; display:flex; flex-direction:column; align-items:center; box-sizing:border-box;">
+    ${contentHtml}
+    ${inputHtml}
+  </div>
+</body>
+</html>`);
 });
 
 // Endpoint to trigger pairing code
@@ -148,8 +194,13 @@ let sock = null;
 
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(config.whatsapp.sessionPath);
+  
+  // Fetch the latest version to prevent pairing rejection
+  const { version } = await fetchLatestWaWebVersion({});
+  console.log(`Using WhatsApp Web Version: ${version.join('.')}`);
 
   sock = makeWASocket({
+    version, // Apply latest version
     auth: state,
     printQRInTerminal: false, 
     logger: pino({ level: 'silent' }),
@@ -163,7 +214,7 @@ async function connectToWhatsApp() {
 
     if (qr) {
       if (!pairingCode) {
-        latestQRDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
+        latestQRDataUrl = await QRCode.toDataURL(qr, { width: 500, margin: 1 });
         console.log('📱 QR Code generated. Visit /qr to scan.');
       }
     }
