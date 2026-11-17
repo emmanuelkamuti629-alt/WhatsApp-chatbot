@@ -15,9 +15,9 @@ const {
   proto
 } = require('@whiskeysockets/baileys');
 
-// ======================================================
+// =====================================================
 // CONFIGURATION
-// ======================================================
+// =====================================================
 
 const app = express();
 
@@ -26,10 +26,11 @@ app.use(express.json({ limit: '2mb' }));
 const PORT = process.env.PORT || 10000;
 
 const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DB_NAME =
+
+const DB_NAME =
   process.env.MONGODB_DB_NAME || 'whatsapp_bot';
 
-const WHATSAPP_AUTH_ID =
+const AUTH_ID =
   process.env.WHATSAPP_AUTH_ID || 'main';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -40,15 +41,15 @@ const GEMINI_MODEL =
 const GEMINI_FALLBACK_MODEL =
   process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.8-flash';
 
-const GEMINI_TIMEOUT_MS =
+const GEMINI_TIMEOUT =
   Number(process.env.GEMINI_TIMEOUT_MS) || 120000;
 
-const GEMINI_MAX_OUTPUT_TOKENS =
+const GEMINI_MAX_TOKENS =
   Number(process.env.GEMINI_MAX_OUTPUT_TOKENS) || 2048;
 
-const BOT_SYSTEM_PROMPT =
+const SYSTEM_PROMPT =
   process.env.BOT_SYSTEM_PROMPT ||
-  'You are a helpful, intelligent WhatsApp AI assistant. Answer naturally, clearly and politely. Keep replies suitable for WhatsApp.';
+  'You are a helpful and intelligent WhatsApp AI assistant. Answer naturally, politely and accurately. Keep replies clear and suitable for WhatsApp.';
 
 const logger = pino({ level: 'silent' });
 
@@ -57,11 +58,13 @@ const seenMessages = new NodeCache({
   checkperiod: 600
 });
 
-// ======================================================
-// GLOBAL VARIABLES
-// ======================================================
+const mongoClient = MONGODB_URI
+  ? new MongoClient(MONGODB_URI)
+  : null;
 
-const mongoClient = new MongoClient(MONGODB_URI || '');
+// =====================================================
+// GLOBAL STATE
+// =====================================================
 
 let authCollection = null;
 
@@ -79,13 +82,13 @@ let startingWhatsApp = false;
 
 let resettingAuth = false;
 
-let reconnectTimer = null;
-
 let pairingInProgress = false;
 
-// ======================================================
+let reconnectTimer = null;
+
+// =====================================================
 // LOGGING
-// ======================================================
+// =====================================================
 
 function logInfo(event, message, extra = {}) {
   console.log(JSON.stringify({
@@ -125,18 +128,18 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// ======================================================
-// MONGODB CONNECTION
-// ======================================================
+// =====================================================
+// MONGODB
+// =====================================================
 
 async function connectMongoDB() {
-  if (!MONGODB_URI) {
-    throw new Error('MONGODB_URI is missing in environment variables.');
+  if (!MONGODB_URI || !mongoClient) {
+    throw new Error('MONGODB_URI is missing.');
   }
 
   await mongoClient.connect();
 
-  const db = mongoClient.db(MONGODB_DB_NAME);
+  const db = mongoClient.db(DB_NAME);
 
   authCollection = db.collection('whatsapp_auth');
 
@@ -148,9 +151,9 @@ async function connectMongoDB() {
   );
 }
 
-// ======================================================
-// MONGODB WHATSAPP AUTHENTICATION
-// ======================================================
+// =====================================================
+// MONGODB WHATSAPP AUTH STORAGE
+// =====================================================
 
 function deserializeAuthValue(value) {
   if (value === null || value === undefined) {
@@ -169,27 +172,24 @@ function deserializeAuthValue(value) {
 
 async function useMongoDBAuthState() {
   if (!authCollection) {
-    throw new Error('MongoDB authentication collection is unavailable.');
+    throw new Error('MongoDB authentication storage is unavailable.');
   }
 
-  const credsId = `${WHATSAPP_AUTH_ID}:creds`;
+  const credsId = AUTH_ID + ':creds';
 
-  const credsDocument = await authCollection.findOne({
+  const storedCreds = await authCollection.findOne({
     _id: credsId
   });
 
   let creds;
 
-  if (credsDocument) {
-    const storedCreds =
-      credsDocument.data ?? credsDocument.creds;
-
-    creds = deserializeAuthValue(storedCreds);
+  if (storedCreds) {
+    creds = deserializeAuthValue(
+      storedCreds.data ?? storedCreds.creds
+    );
   } else {
     creds = initAuthCreds();
   }
-
-  // Save WhatsApp credentials.
 
   const saveCreds = async () => {
     await authCollection.updateOne(
@@ -207,8 +207,6 @@ async function useMongoDBAuthState() {
     );
   };
 
-  // Save and retrieve encryption keys.
-
   const keys = {
     get: async (type, ids) => {
       const result = {};
@@ -217,10 +215,10 @@ async function useMongoDBAuthState() {
         return result;
       }
 
-      const prefix = `${WHATSAPP_AUTH_ID}:${type}:`;
+      const prefix = AUTH_ID + ':' + type + ':';
 
       const documentIds = ids.map(
-        id => `${prefix}${id}`
+        id => prefix + id
       );
 
       const documents = await authCollection
@@ -230,7 +228,9 @@ async function useMongoDBAuthState() {
         .toArray();
 
       for (const document of documents) {
-        const id = document._id.substring(prefix.length);
+        const id = document._id.substring(
+          prefix.length
+        );
 
         const storedValue =
           document.data ?? document.value;
@@ -260,7 +260,7 @@ async function useMongoDBAuthState() {
 
         for (const [id, value] of Object.entries(entries)) {
           const documentId =
-            `${WHATSAPP_AUTH_ID}:${category}:${id}`;
+            AUTH_ID + ':' + category + ':' + id;
 
           if (value === null || value === undefined) {
             operations.push({
@@ -306,27 +306,30 @@ async function useMongoDBAuthState() {
   };
 }
 
-// ======================================================
+// =====================================================
 // GEMINI AI
-// ======================================================
+// =====================================================
 
 async function callGemini(model, prompt) {
   if (!GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is missing.');
   }
 
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+  const url =
+    'https://generativelanguage.googleapis.com/v1beta/models/' +
+    encodeURIComponent(model) +
+    ':generateContent?key=' +
+    encodeURIComponent(GEMINI_API_KEY);
 
   const controller = new AbortController();
 
   const timeout = setTimeout(
     () => controller.abort(),
-    GEMINI_TIMEOUT_MS
+    GEMINI_TIMEOUT
   );
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(url, {
       method: 'POST',
 
       headers: {
@@ -338,9 +341,7 @@ async function callGemini(model, prompt) {
       body: JSON.stringify({
         systemInstruction: {
           parts: [
-            {
-              text: BOT_SYSTEM_PROMPT
-            }
+            { text: SYSTEM_PROMPT }
           ]
         },
 
@@ -348,15 +349,13 @@ async function callGemini(model, prompt) {
           {
             role: 'user',
             parts: [
-              {
-                text: prompt
-              }
+              { text: prompt }
             ]
           }
         ],
 
         generationConfig: {
-          maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS
+          maxOutputTokens: GEMINI_MAX_TOKENS
         }
       })
     });
@@ -369,15 +368,14 @@ async function callGemini(model, prompt) {
       data = JSON.parse(responseText);
     } catch {
       throw new Error(
-        `Gemini returned an invalid response. HTTP ${response.status}`
+        'Invalid Gemini response. HTTP ' + response.status
       );
     }
 
     if (!response.ok) {
       throw new Error(
-        `Gemini HTTP ${response.status}: ${
-          data?.error?.message || responseText
-        }`
+        'Gemini HTTP ' + response.status + ': ' +
+        (data?.error?.message || responseText)
       );
     }
 
@@ -388,7 +386,7 @@ async function callGemini(model, prompt) {
 
     if (!answer) {
       throw new Error(
-        `Gemini model ${model} returned an empty response.`
+        'Gemini returned an empty response using ' + model
       );
     }
 
@@ -414,14 +412,14 @@ async function askGemini(prompt) {
     try {
       logInfo(
         'GEMINI_REQUEST',
-        `Sending request to ${model}.`
+        'Sending request to ' + model
       );
 
       const answer = await callGemini(model, prompt);
 
       logInfo(
         'GEMINI_SUCCESS',
-        `Gemini responded using ${model}.`
+        'Gemini responded using ' + model
       );
 
       return answer;
@@ -431,7 +429,7 @@ async function askGemini(prompt) {
 
       logError(
         'GEMINI_MODEL_FAILED',
-        `Model ${model} failed.`,
+        'Gemini model failed: ' + model,
         err
       );
     }
@@ -440,16 +438,14 @@ async function askGemini(prompt) {
   throw lastError || new Error('All Gemini models failed.');
 }
 
-// ======================================================
-// WHATSAPP MESSAGE HANDLING
-// ======================================================
+// =====================================================
+// MESSAGE EXTRACTION
+// =====================================================
 
 function extractMessageText(message) {
   if (!message) return '';
 
   let content = message;
-
-  // Unwrap common WhatsApp message wrappers.
 
   for (let i = 0; i < 5; i++) {
     if (content.ephemeralMessage?.message) {
@@ -476,6 +472,10 @@ function extractMessageText(message) {
   ).trim();
 }
 
+// =====================================================
+// INCOMING WHATSAPP MESSAGES
+// =====================================================
+
 async function handleIncomingMessage(socket, message) {
   try {
     if (!message || !message.message) return;
@@ -488,45 +488,40 @@ async function handleIncomingMessage(socket, message) {
       return;
     }
 
-    if (
-      message.key?.id &&
-      seenMessages.has(message.key.id)
-    ) {
+    const messageId = message.key?.id;
+
+    if (messageId && seenMessages.has(messageId)) {
       return;
     }
 
-    if (message.key?.id) {
-      seenMessages.set(message.key.id, true);
+    if (messageId) {
+      seenMessages.set(messageId, true);
     }
 
-    const incomingText = extractMessageText(message.message);
+    const text = extractMessageText(message.message);
 
-    if (!incomingText) {
-      return;
-    }
+    if (!text) return;
 
     logInfo(
       'WHATSAPP_MESSAGE',
-      'Incoming WhatsApp message received.',
-      {
-        sender: jid,
-        messageLength: incomingText.length
-      }
+      'Incoming message received.',
+      { sender: jid }
     );
 
-    const reply = await askGemini(incomingText);
+    const answer = await askGemini(text);
 
-    if (!reply) return;
+    if (!answer) return;
 
-    // Do not send from an outdated socket.
-
-    if (socket !== whatsappSocket || !whatsappConnected) {
+    if (
+      socket !== whatsappSocket ||
+      !whatsappConnected
+    ) {
       return;
     }
 
     await socket.sendMessage(
       jid,
-      { text: reply },
+      { text: answer },
       { quoted: message }
     );
 
@@ -538,19 +533,19 @@ async function handleIncomingMessage(socket, message) {
 
   } catch (err) {
     logError(
-      'WHATSAPP_MESSAGE_ERROR',
-      'Could not process incoming message.',
+      'MESSAGE_HANDLER_ERROR',
+      'Could not process WhatsApp message.',
       err
     );
   }
 }
 
-// ======================================================
+// =====================================================
 // START WHATSAPP
-// ======================================================
+// =====================================================
 
 async function startWhatsApp() {
-  if (startingWhatsApp) {
+  if (startingWhatsApp || resettingAuth) {
     return;
   }
 
@@ -566,12 +561,12 @@ async function startWhatsApp() {
   startingWhatsApp = true;
 
   try {
+    whatsappState = 'connecting';
+
     logInfo(
       'WHATSAPP_START',
       'Starting WhatsApp socket.'
     );
-
-    whatsappState = 'connecting';
 
     const {
       state,
@@ -604,8 +599,6 @@ async function startWhatsApp() {
 
     whatsappSocket = socket;
 
-    // Save credentials whenever Baileys updates them.
-
     socket.ev.on('creds.update', async () => {
       try {
         await saveCreds();
@@ -618,175 +611,153 @@ async function startWhatsApp() {
       }
     });
 
-    // WhatsApp connection updates.
+    // CONNECTION EVENTS
 
-    socket.ev.on(
-      'connection.update',
-      async update => {
-        if (socket !== whatsappSocket) {
-          return;
-        }
+    socket.ev.on('connection.update', async update => {
+      if (socket !== whatsappSocket) return;
 
-        const {
-          connection,
-          lastDisconnect,
-          qr
-        } = update;
+      const {
+        connection,
+        lastDisconnect,
+        qr
+      } = update;
 
-        if (qr) {
-          qrCodeData = qr;
+      if (qr) {
+        qrCodeData = qr;
 
-          whatsappConnected = false;
+        whatsappConnected = false;
 
-          whatsappState = 'waiting_for_scan';
+        whatsappState = 'waiting_for_scan';
 
-          logInfo(
-            'WHATSAPP_QR',
-            'New WhatsApp QR code generated.'
-          );
-        }
+        logInfo(
+          'WHATSAPP_QR',
+          'New QR code generated.'
+        );
+      }
 
-        if (connection === 'connecting') {
-          whatsappState = 'connecting';
+      if (connection === 'connecting') {
+        whatsappState = 'connecting';
 
-          logInfo(
-            'WHATSAPP_CONNECTING',
-            'Connecting to WhatsApp.'
-          );
-        }
+        logInfo(
+          'WHATSAPP_CONNECTING',
+          'Connecting to WhatsApp.'
+        );
+      }
 
-        if (connection === 'open') {
-          whatsappConnected = true;
+      if (connection === 'open') {
+        whatsappConnected = true;
 
-          whatsappState = 'connected';
+        whatsappState = 'connected';
 
-          qrCodeData = null;
+        qrCodeData = null;
 
-          logInfo(
-            'WHATSAPP_CONNECTED',
-            'WhatsApp connected successfully.'
-          );
-        }
+        logInfo(
+          'WHATSAPP_CONNECTED',
+          'WhatsApp connected successfully.'
+        );
+      }
 
-        if (connection === 'close') {
-          whatsappConnected = false;
+      if (connection === 'close') {
+        whatsappConnected = false;
 
-          whatsappState = 'disconnected';
+        whatsappState = 'disconnected';
 
-          qrCodeData = null;
+        qrCodeData = null;
 
-          const statusCode =
-            lastDisconnect?.error?.output?.statusCode;
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode;
 
-          logWarn(
-            'WHATSAPP_CLOSED',
-            'WhatsApp connection closed.',
-            { statusCode }
-          );
+        logWarn(
+          'WHATSAPP_CLOSED',
+          'WhatsApp connection closed.',
+          { statusCode }
+        );
 
-          // ============================================
-          // FIX FOR 401 LOGOUT / INVALID AUTH SESSION
-          // ============================================
+        whatsappSocket = null;
 
-          if (
-            statusCode === DisconnectReason.loggedOut
-          ) {
-            if (resettingAuth) {
-              return;
-            }
+        // =============================================
+        // AUTOMATIC 401 AUTHENTICATION RESET
+        // =============================================
 
-            resettingAuth = true;
+        if (statusCode === DisconnectReason.loggedOut) {
+          if (resettingAuth) return;
 
-            whatsappSocket = null;
+          resettingAuth = true;
 
-            try {
-              logWarn(
-                'WHATSAPP_LOGOUT',
-                'Invalid WhatsApp session detected. Resetting authentication.'
-              );
+          try {
+            logWarn(
+              'WHATSAPP_LOGOUT',
+              'Invalid session detected. Resetting authentication.'
+            );
 
-              const escapedPrefix = escapeRegex(
-                `${WHATSAPP_AUTH_ID}:`
-              );
+            const prefix = escapeRegex(AUTH_ID + ':');
 
-              // Delete only this bot's saved credentials.
+            const result = await authCollection.deleteMany({
+              _id: {
+                $regex: '^' + prefix
+              }
+            });
 
-              const result = await authCollection.deleteMany({
-                _id: {
-                  $regex: `^${escapedPrefix}`
-                }
-              });
+            logInfo(
+              'WHATSAPP_AUTH_RESET',
+              'Old authentication records cleared.',
+              {
+                deletedCount: result.deletedCount
+              }
+            );
 
-              logInfo(
-                'WHATSAPP_AUTH_RESET',
-                'Old WhatsApp credentials cleared.',
-                {
-                  deletedCount: result.deletedCount
-                }
-              );
+            await sleep(2000);
 
-              await sleep(2000);
+            resettingAuth = false;
 
-              // Start a fresh WhatsApp session.
+            await startWhatsApp();
 
-              await startWhatsApp();
+            return;
 
-            } catch (err) {
-              logError(
-                'WHATSAPP_AUTH_RESET_ERROR',
-                'Could not reset WhatsApp authentication.',
-                err
-              );
+          } catch (err) {
+            logError(
+              'WHATSAPP_AUTH_RESET_ERROR',
+              'Could not reset WhatsApp authentication.',
+              err
+            );
 
-            } finally {
-              resettingAuth = false;
-            }
+            resettingAuth = false;
 
             return;
           }
+        }
 
-          // ============================================
-          // AUTOMATIC RECONNECTION
-          // ============================================
+        // =============================================
+        // AUTOMATIC RECONNECTION
+        // =============================================
 
-          whatsappSocket = null;
+        if (!reconnectTimer) {
+          reconnectTimer = setTimeout(async () => {
+            reconnectTimer = null;
 
-          if (!reconnectTimer) {
-            reconnectTimer = setTimeout(async () => {
-              reconnectTimer = null;
+            if (!whatsappSocket && !startingWhatsApp) {
+              logInfo(
+                'WHATSAPP_RECONNECT',
+                'Attempting to reconnect WhatsApp.'
+              );
 
-              if (!whatsappSocket && !startingWhatsApp) {
-                logInfo(
-                  'WHATSAPP_RECONNECT',
-                  'Attempting WhatsApp reconnection.'
-                );
+              await startWhatsApp();
+            }
 
-                await startWhatsApp();
-              }
-
-            }, 5000);
-          }
+          }, 5000);
         }
       }
-    );
+    });
 
-    // Listen for incoming WhatsApp messages.
+    // INCOMING MESSAGES
 
-    socket.ev.on(
-      'messages.upsert',
-      async ({ messages, type }) => {
-        if (type !== 'notify') {
-          return;
-        }
+    socket.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
 
-        for (const message of messages) {
-          await handleIncomingMessage(
-            socket,
-            message
-          );
-        }
+      for (const message of messages) {
+        await handleIncomingMessage(socket, message);
       }
-    );
+    });
 
     logInfo(
       'WHATSAPP_SOCKET_CREATED',
@@ -811,20 +782,25 @@ async function startWhatsApp() {
   }
 }
 
-// ======================================================
-// HOMEPAGE
-// ======================================================
+// =====================================================
+// HOMEPAGE - BOTH PAIRING METHODS
+// =====================================================
 
 app.get('/', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
+
 <meta charset="UTF-8">
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>Manny AI WhatsApp Bot</title>
 
 <style>
+
 * {
   box-sizing: border-box;
 }
@@ -838,107 +814,137 @@ body {
 }
 
 .container {
-  max-width: 520px;
-  margin: 35px auto;
+  max-width: 500px;
+  margin: 25px auto;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 25px;
+}
+
+.logo {
+  font-size: 42px;
+}
+
+h1 {
+  color: #25d366;
+  margin: 8px 0;
+}
+
+.subtitle {
+  color: #b7c5cc;
+  line-height: 1.5;
 }
 
 .card {
   background: #17252d;
-  padding: 24px;
-  border-radius: 16px;
-  margin-bottom: 18px;
-  border: 1px solid #29404b;
+  border: 1px solid #30434d;
+  border-radius: 15px;
+  padding: 22px;
+  margin-bottom: 20px;
 }
 
-h1 {
+.card h2 {
+  font-size: 19px;
+  margin-top: 0;
+}
+
+.description {
+  color: #b7c5cc;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+input {
+  width: 100%;
+  padding: 15px;
+  margin: 12px 0;
+  border: 1px solid #45616d;
+  border-radius: 9px;
+  background: #0b141a;
+  color: white;
+  font-size: 17px;
+  outline: none;
+}
+
+input:focus {
+  border-color: #25d366;
+}
+
+button {
+  width: 100%;
+  padding: 15px;
+  border: none;
+  border-radius: 9px;
+  background: #25d366;
+  color: #062b17;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+button:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.pairCode {
+  font-size: 30px;
+  letter-spacing: 5px;
   text-align: center;
   color: #25d366;
-  margin-bottom: 8px;
+  background: #0b141a;
+  padding: 20px;
+  border-radius: 10px;
+  margin: 15px 0;
+  font-weight: bold;
 }
 
-.subtitle {
+#pairResult {
   text-align: center;
-  color: #b6c5cc;
-  margin-bottom: 25px;
+  margin-top: 15px;
+  overflow-wrap: anywhere;
 }
 
-.status {
+#qrImage {
+  display: none;
+  width: 100%;
+  max-width: 270px;
+  margin: 20px auto;
+  background: white;
+  padding: 10px;
+  border-radius: 10px;
+}
+
+#qrStatus {
+  text-align: center;
+  color: #25d366;
+  margin-top: 15px;
+}
+
+.statusRow {
   display: flex;
   justify-content: space-between;
   padding: 12px 0;
   border-bottom: 1px solid #30434d;
 }
 
-.status:last-child {
+.statusRow:last-child {
   border-bottom: none;
 }
 
-.status span:last-child {
+.statusValue {
   color: #25d366;
   font-weight: bold;
 }
 
-input {
-  width: 100%;
-  padding: 14px;
-  margin: 10px 0;
-  border: 1px solid #3d5662;
-  border-radius: 9px;
-  background: #0b141a;
-  color: white;
-  font-size: 16px;
-}
-
-button {
-  width: 100%;
-  padding: 14px;
-  border: none;
-  border-radius: 9px;
-  background: #25d366;
-  color: #062b17;
-  font-weight: bold;
-  font-size: 16px;
-  cursor: pointer;
-  margin-top: 10px;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.code {
-  font-size: 28px;
-  letter-spacing: 5px;
-  text-align: center;
-  color: #25d366;
-  font-weight: bold;
-  padding: 18px;
-  background: #0b141a;
-  border-radius: 10px;
+.instructions {
+  color: #b7c5cc;
+  font-size: 13px;
+  line-height: 1.7;
   margin-top: 15px;
-}
-
-#qrImage {
-  width: 100%;
-  max-width: 280px;
-  display: none;
-  margin: 20px auto;
-  background: white;
-  padding: 10px;
-  border-radius: 12px;
-}
-
-.message {
-  color: #b6c5cc;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-#result {
-  margin-top: 15px;
-  text-align: center;
-  overflow-wrap: anywhere;
 }
 
 footer {
@@ -947,47 +953,38 @@ footer {
   font-size: 12px;
   padding: 20px;
 }
+
 </style>
+
 </head>
 
 <body>
 
 <div class="container">
 
-  <h1>Manny AI WhatsApp Bot</h1>
+  <div class="header">
 
-  <p class="subtitle">
-    Connect your WhatsApp account and activate your AI assistant.
-  </p>
+    <div class="logo">🤖</div>
 
-  <div class="card">
+    <h1>Manny AI WhatsApp Bot</h1>
 
-    <h3>Connection Status</h3>
-
-    <div class="status">
-      <span>WhatsApp</span>
-      <span id="waStatus">Checking...</span>
-    </div>
-
-    <div class="status">
-      <span>MongoDB</span>
-      <span id="mongoStatus">Checking...</span>
-    </div>
-
-    <div class="status">
-      <span>Gemini AI</span>
-      <span id="geminiStatus">Checking...</span>
-    </div>
+    <p class="subtitle">
+      Connect your WhatsApp account to your AI assistant.
+      Choose your preferred linking method below.
+    </p>
 
   </div>
 
+  <!-- PHONE NUMBER PAIRING -->
+
   <div class="card">
 
-    <h3>Connect with Phone Number</h3>
+    <h2>📱 Link using phone number</h2>
 
-    <p class="message">
-      Enter the WhatsApp number you want to link, including
-      the country code. Example: 2547XXXXXXXX.
+    <p class="description">
+      Enter the WhatsApp number you want to connect.
+      Include your country code.
+      For Kenya, use 2547XXXXXXXX.
       Do not include the plus sign.
     </p>
 
@@ -998,28 +995,99 @@ footer {
       autocomplete="tel"
     >
 
-    <button id="pairButton" onclick="requestPairing()">
+    <button
+      id="pairButton"
+      onclick="generateCode()"
+    >
       Generate Pairing Code
     </button>
 
-    <div id="result"></div>
+    <div id="pairResult"></div>
+
+    <div class="instructions">
+
+      1. Open WhatsApp on the phone you want to link.
+
+      <br>
+
+      2. Go to Linked Devices.
+
+      <br>
+
+      3. Select Link a Device.
+
+      <br>
+
+      4. Select Link with phone number instead.
+
+      <br>
+
+      5. Enter the pairing code displayed above.
+
+    </div>
 
   </div>
 
+  <!-- QR CODE PAIRING -->
+
   <div class="card">
 
-    <h3>Connect Using QR Code</h3>
+    <h2>🔳 Link using QR code</h2>
 
-    <p class="message">
-      Open WhatsApp, go to Linked Devices, choose Link a Device,
-      then scan the QR code below.
+    <p class="description">
+      You can also connect by scanning the QR code
+      using WhatsApp on your phone.
     </p>
 
-    <img id="qrImage" alt="WhatsApp QR Code">
-
-    <p class="message" id="qrMessage">
+    <div id="qrStatus">
       Waiting for QR code...
-    </p>
+    </div>
+
+    <img
+      id="qrImage"
+      alt="WhatsApp QR Code"
+    >
+
+    <div class="instructions">
+
+      1. Open WhatsApp.
+
+      <br>
+
+      2. Go to Linked Devices.
+
+      <br>
+
+      3. Select Link a Device.
+
+      <br>
+
+      4. Scan the QR code above.
+
+    </div>
+
+  </div>
+
+  <!-- CONNECTION STATUS -->
+
+  <div class="card">
+
+    <h2>Connection status</h2>
+
+    <div class="statusRow">
+      <span>WhatsApp</span>
+      <span class="statusValue" id="waStatus">Checking...</span>
+    </div>
+
+    <div class="statusRow">
+      <span>MongoDB</span>
+      <span class="statusValue" id="mongoStatus">Checking...</span>
+    </div>
+
+    <div class="statusRow">
+      <span>Gemini AI</span>
+      <span class="statusValue" id="geminiStatus">Checking...</span>
+    </div>
 
   </div>
 
@@ -1031,55 +1099,24 @@ footer {
 
 <script>
 
-async function refreshStatus() {
-  try {
-    const response = await fetch('/status');
+// =============================================
+// GENERATE PHONE PAIRING CODE
+// =============================================
 
-    const data = await response.json();
+async function generateCode() {
 
-    document.getElementById('waStatus').textContent =
-      data.whatsappConnected
-        ? 'Connected'
-        : data.whatsappState;
+  const phone =
+    document.getElementById('phone').value.trim();
 
-    document.getElementById('mongoStatus').textContent =
-      data.mongoConnected ? 'Connected' : 'Disconnected';
+  const result =
+    document.getElementById('pairResult');
 
-    document.getElementById('geminiStatus').textContent =
-      data.geminiConfigured ? 'Configured' : 'Missing API Key';
+  const button =
+    document.getElementById('pairButton');
 
-    const qrImage = document.getElementById('qrImage');
-
-    const qrMessage = document.getElementById('qrMessage');
-
-    if (data.qrReady && !data.whatsappConnected) {
-      qrImage.src = '/qr?t=' + Date.now();
-
-      qrImage.style.display = 'block';
-
-      qrMessage.textContent = 'Scan this QR code using WhatsApp.';
-    } else {
-      qrImage.style.display = 'none';
-
-      qrMessage.textContent = data.whatsappConnected
-        ? 'WhatsApp is already connected.'
-        : 'Waiting for QR code...';
-    }
-
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-async function requestPairing() {
-  const phone = document.getElementById('phone').value.trim();
-
-  const result = document.getElementById('result');
-
-  const button = document.getElementById('pairButton');
-
-  if (!phone) {
-    result.textContent = 'Enter your WhatsApp number first.';
+  if (!/^\\d{8,15}$/.test(phone)) {
+    result.textContent =
+      'Enter a valid phone number with country code.';
     return;
   }
 
@@ -1090,6 +1127,7 @@ async function requestPairing() {
   result.textContent = 'Please wait...';
 
   try {
+
     const response = await fetch('/request-pairing', {
       method: 'POST',
 
@@ -1105,37 +1143,124 @@ async function requestPairing() {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || 'Pairing failed.');
+      throw new Error(
+        data.error || 'Pairing code generation failed.'
+      );
     }
 
     result.innerHTML = '';
 
     const heading = document.createElement('p');
+
     heading.textContent = 'Your WhatsApp pairing code:';
 
     const code = document.createElement('div');
-    code.className = 'code';
+
+    code.className = 'pairCode';
+
     code.textContent = data.code;
 
     const copyButton = document.createElement('button');
+
     copyButton.textContent = 'Copy Pairing Code';
 
     copyButton.onclick = async function() {
-      await navigator.clipboard.writeText(data.code);
-      copyButton.textContent = 'Copied!';
+
+      try {
+
+        await navigator.clipboard.writeText(data.code);
+
+        copyButton.textContent = 'Copied successfully!';
+
+      } catch {
+
+        copyButton.textContent = 'Please copy the code manually.';
+
+      }
+
     };
 
     result.appendChild(heading);
+
     result.appendChild(code);
+
     result.appendChild(copyButton);
 
   } catch (error) {
+
     result.textContent = error.message;
 
   } finally {
+
     button.disabled = false;
+
     button.textContent = 'Generate Pairing Code';
+
   }
+
+}
+
+// =============================================
+// REFRESH CONNECTION STATUS
+// =============================================
+
+async function refreshStatus() {
+
+  try {
+
+    const response = await fetch('/status', {
+      cache: 'no-store'
+    });
+
+    const data = await response.json();
+
+    document.getElementById('waStatus').textContent =
+      data.whatsappConnected
+        ? 'Connected'
+        : data.whatsappState;
+
+    document.getElementById('mongoStatus').textContent =
+      data.mongoConnected
+        ? 'Connected'
+        : 'Disconnected';
+
+    document.getElementById('geminiStatus').textContent =
+      data.geminiConfigured
+        ? 'Configured'
+        : 'Missing API Key';
+
+    const qrImage =
+      document.getElementById('qrImage');
+
+    const qrStatus =
+      document.getElementById('qrStatus');
+
+    if (data.qrReady && !data.whatsappConnected) {
+
+      qrImage.src = '/qr?t=' + Date.now();
+
+      qrImage.style.display = 'block';
+
+      qrStatus.textContent =
+        'Scan this QR code using WhatsApp.';
+
+    } else {
+
+      qrImage.style.display = 'none';
+
+      qrStatus.textContent =
+        data.whatsappConnected
+          ? 'WhatsApp is already connected.'
+          : 'Waiting for QR code...';
+
+    }
+
+  } catch (error) {
+
+    console.error('Status error:', error);
+
+  }
+
 }
 
 refreshStatus();
@@ -1148,9 +1273,9 @@ setInterval(refreshStatus, 5000);
 </html>`);
 });
 
-// ======================================================
+// =====================================================
 // HEALTH CHECK
-// ======================================================
+// =====================================================
 
 app.get('/health', (req, res) => {
   res.json({
@@ -1163,11 +1288,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ======================================================
-// STATUS
-// ======================================================
+// =====================================================
+// STATUS API
+// =====================================================
 
 app.get('/status', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+
   res.json({
     success: true,
 
@@ -1191,12 +1318,13 @@ app.get('/status', (req, res) => {
   });
 });
 
-// ======================================================
-// QR CODE
-// ======================================================
+// =====================================================
+// QR CODE API
+// =====================================================
 
 app.get('/qr', async (req, res) => {
   try {
+
     if (!qrCodeData) {
       return res.status(404).send(
         'QR code is not available. Wait for a new QR code.'
@@ -1216,30 +1344,39 @@ app.get('/qr', async (req, res) => {
     res.send(image);
 
   } catch (err) {
+
     logError(
       'QR_ERROR',
-      'Could not generate QR image.',
+      'Could not generate QR code.',
       err
     );
 
-    res.status(500).send('Could not generate QR code.');
+    res.status(500).send('QR generation failed.');
+
   }
 });
 
-// ======================================================
-// PHONE NUMBER PAIRING
-// ======================================================
+// =====================================================
+// PHONE NUMBER PAIRING API
+// =====================================================
 
 function normalizePhone(phone) {
-  return String(phone || '')
-    .replace(/\D/g, '');
+  return String(phone || '').replace(/\D/g, '');
 }
 
 app.post('/request-pairing', async (req, res) => {
+
   if (pairingInProgress) {
     return res.status(409).json({
       success: false,
-      error: 'A pairing request is already in progress.'
+      error: 'A pairing request is already in progress. Please wait.'
+    });
+  }
+
+  if (resettingAuth) {
+    return res.status(503).json({
+      success: false,
+      error: 'WhatsApp authentication is being reset. Try again shortly.'
     });
   }
 
@@ -1271,9 +1408,10 @@ app.post('/request-pairing', async (req, res) => {
   pairingInProgress = true;
 
   try {
+
     const socket = whatsappSocket;
 
-    // Allow the socket time to initialize.
+    // Allow the WhatsApp socket to initialize.
 
     await sleep(3000);
 
@@ -1291,7 +1429,7 @@ app.post('/request-pairing', async (req, res) => {
 
     logInfo(
       'PAIRING_REQUEST',
-      'Generating WhatsApp pairing code.'
+      'Generating phone number pairing code.'
     );
 
     const code = await socket.requestPairingCode(phone);
@@ -1308,6 +1446,7 @@ app.post('/request-pairing', async (req, res) => {
     });
 
   } catch (err) {
+
     logError(
       'PAIRING_ERROR',
       'Could not generate pairing code.',
@@ -1316,24 +1455,28 @@ app.post('/request-pairing', async (req, res) => {
 
     res.status(500).json({
       success: false,
-      error: err.message || 'Pairing failed.'
+      error: err.message || 'Pairing code generation failed.'
     });
 
   } finally {
+
     pairingInProgress = false;
+
   }
+
 });
 
-// ======================================================
-// SEND WHATSAPP MESSAGE
-// ======================================================
+// =====================================================
+// SEND WHATSAPP MESSAGE API
+// =====================================================
 
 function normalizeJid(value) {
   const raw = String(value || '').trim();
 
   if (raw.includes('@')) {
+
     if (!/^\d{5,20}@(s\.whatsapp\.net|g\.us)$/.test(raw)) {
-      throw new Error('Invalid WhatsApp recipient JID.');
+      throw new Error('Invalid WhatsApp recipient.');
     }
 
     return raw;
@@ -1342,14 +1485,15 @@ function normalizeJid(value) {
   const phone = normalizePhone(raw);
 
   if (!/^\d{8,15}$/.test(phone)) {
-    throw new Error('Invalid recipient phone number.');
+    throw new Error('Enter a valid recipient phone number.');
   }
 
-  return `${phone}@s.whatsapp.net`;
+  return phone + '@s.whatsapp.net';
 }
 
 app.post('/send', async (req, res) => {
   try {
+
     if (!whatsappConnected || !whatsappSocket) {
       return res.status(503).json({
         success: false,
@@ -1391,6 +1535,7 @@ app.post('/send', async (req, res) => {
     });
 
   } catch (err) {
+
     logError(
       'SEND_ERROR',
       'Could not send WhatsApp message.',
@@ -1399,19 +1544,21 @@ app.post('/send', async (req, res) => {
 
     res.status(500).json({
       success: false,
-      error: err.message || 'Could not send message.'
+      error: err.message || 'Message sending failed.'
     });
+
   }
 });
 
-// ======================================================
+// =====================================================
 // START SERVER
-// ======================================================
+// =====================================================
 
 app.listen(PORT, '0.0.0.0', () => {
+
   logInfo(
     'SERVER_STARTED',
-    `Server running on port ${PORT}.`
+    'Server running on port ' + PORT
   );
 
   logInfo(
@@ -1424,13 +1571,12 @@ app.listen(PORT, '0.0.0.0', () => {
     }
   );
 
-  // Connect MongoDB and then start WhatsApp.
-
   connectMongoDB()
     .then(async () => {
       await startWhatsApp();
     })
     .catch(err => {
+
       mongoConnected = false;
 
       logError(
@@ -1438,12 +1584,14 @@ app.listen(PORT, '0.0.0.0', () => {
         'Could not initialize MongoDB or WhatsApp.',
         err
       );
+
     });
+
 });
 
-// ======================================================
+// =====================================================
 // PROCESS ERROR HANDLING
-// ======================================================
+// =====================================================
 
 process.on('unhandledRejection', reason => {
   logError(
