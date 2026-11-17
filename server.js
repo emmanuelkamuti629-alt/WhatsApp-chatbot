@@ -30,7 +30,6 @@ const config = {
     host: '0.0.0.0',
   },
   whatsapp: {
-    // On Render free tier, this must be a relative path
     sessionPath: process.env.SESSION_PATH || './.wwebjs_auth',
   },
   logLevel: process.env.LOG_LEVEL || 'info',
@@ -106,8 +105,8 @@ async function generateReply(chatId, userMessage) {
 }
 
 // ─── Chrome Path Resolution ────────────────────────────────────────────────
-// We removed the broken executablePath override. Puppeteer will now search
-// the default cache directory automatically.
+// Puppeteer normally looks in ~/.cache/puppeteer on Render. 
+// We define the args carefully to prevent crashes on small cloud instances.
 const puppeteerConfig = {
   headless: true,
   args: [
@@ -118,9 +117,11 @@ const puppeteerConfig = {
     '--no-first-run',
     '--no-zygote',
     '--disable-gpu',
-    '--single-process',
   ],
 };
+
+// If Render successfully downloaded Chrome during the build phase, 
+// it puts it in /opt/render/.cache/puppeteer. Puppeteer finds this automatically.
 
 // ─── WhatsApp Client ───────────────────────────────────────────────────────
 const client = new Client({
@@ -176,11 +177,11 @@ client.on('disconnected', (reason) => {
 
 client.on('message', handleMessage);
 
-// Add a 60-second timeout. If Chrome fails to start, it won't hang forever.
+// Start Client with a 90-second timeout to prevent infinite hangs
 log.info('Starting WhatsApp Client...');
 Promise.race([
   client.initialize(),
-  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout: Chrome failed to start in 60s')), 60000))
+  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout: Chrome failed to start in 90s')), 90000))
 ]).catch((e) => log.error('Client Init Failed:', e.message));
 
 // ─── Express Server ────────────────────────────────────────────────────────
