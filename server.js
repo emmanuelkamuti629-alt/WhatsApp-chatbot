@@ -897,6 +897,8 @@ app.get('/', (req, res) => {
 
         <p><a href="/qr">Link Device (QR & Phone)</a></p>
 
+        <p><a href="/reset-auth" style="color: red;">Reset WhatsApp Session</a></p>
+
       </body>
     </html>
   `);
@@ -1161,6 +1163,73 @@ app.get('/qr', async (req, res) => {
   } catch (err) {
     error('QR_ROUTE', 'Could not generate QR code page.', err);
     res.status(500).send('Could not generate QR code page.');
+  }
+});
+
+// ======================================================
+// RESET WHATSAPP SESSION (NEW)
+// ======================================================
+
+app.get('/reset-auth', async (req, res) => {
+  try {
+    info('RESET_AUTH', 'User requested WhatsApp session reset.');
+
+    if (!authCollection) {
+      return res.status(500).send('Database not connected.');
+    }
+
+    // 1. Delete all credentials from MongoDB
+    await authCollection.deleteMany({});
+    
+    // 2. Clear local memory and QR code
+    currentQR = null;
+    whatsappConnected = false;
+    pairingInProgress = false;
+
+    // 3. Force close the existing socket if it exists
+    if (whatsappSocket) {
+      try {
+        whatsappSocket.end(undefined);
+      } catch (e) {
+        // Ignore errors when force-closing
+      }
+      whatsappSocket = null;
+    }
+
+    // 4. Clear any pending reconnect timers
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    success('RESET_AUTH', 'WhatsApp session cleared. Restarting connection.');
+
+    // 5. Restart the WhatsApp connection to generate a fresh QR code
+    setTimeout(() => {
+      startWhatsApp().catch(err => {
+        error('RESET_AUTH', 'Failed to restart WhatsApp after reset.', err);
+      });
+    }, 1000);
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Session Reset</title>
+        </head>
+        <body style="text-align:center;font-family:Arial;padding:20px">
+          <h2>WhatsApp Session Reset Successful</h2>
+          <p>The old credentials have been deleted. The bot is now generating a fresh QR code.</p>
+          <p>Please wait 5-10 seconds, then go to the link page.</p>
+          <a href="/qr" style="display:inline-block; margin-top:20px; padding:10px 20px; background:#25D366; color:white; text-decoration:none; border-radius:5px;">Go to QR / Pairing Page</a>
+        </body>
+      </html>
+    `);
+
+  } catch (err) {
+    error('RESET_AUTH', 'Failed to reset WhatsApp session.', err);
+    res.status(500).send('Failed to reset session: ' + err.message);
   }
 });
 
