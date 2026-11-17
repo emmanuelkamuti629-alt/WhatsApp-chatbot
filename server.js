@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -19,21 +20,31 @@ const {
 
 const config = {
   port: process.env.PORT || 3000,
+
   botName: process.env.BOT_NAME || 'Smart Assistant',
+
   geminiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-  geminiFallbackModel:
-    process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite',
-  geminiTimeoutMs: Number(process.env.GEMINI_TIMEOUT_MS || 60000),
-  geminiMaxTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096),
-  geminiTemperature: Number(process.env.GEMINI_TEMPERATURE || 0.7),
-  geminiMaxRetries: Number(process.env.GEMINI_MAX_RETRIES || 3),
+
+  // Increased timeout: 120 seconds
+  geminiTimeoutMs: Number(process.env.GEMINI_TIMEOUT_MS || 120000),
+
+  geminiMaxTokens: Number(
+    process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096
+  ),
+
+  geminiTemperature: Number(
+    process.env.GEMINI_TEMPERATURE || 0.7
+  ),
+
   mongodbUri: process.env.MONGODB_URI,
   mongodbDatabase: process.env.MONGODB_DB_NAME || 'whatsapp_bot',
+
   authId: process.env.WHATSAPP_AUTH_ID || 'main',
+
   systemPrompt:
     process.env.SYSTEM_PROMPT ||
-    'You are a helpful WhatsApp AI assistant. Give clear, friendly and accurate answers.'
+    'You are a helpful WhatsApp assistant. Give clear, friendly and accurate answers.'
 };
 
 // ======================================================
@@ -64,9 +75,8 @@ function error(step, message, err) {
     error: err?.message,
     name: err?.name,
     code: err?.code,
-    status: err?.status,
     stack: err?.stack
-  }, message);
+  });
 }
 
 // ======================================================
@@ -90,46 +100,15 @@ let authCollection;
 let whatsappSocket = null;
 let whatsappConnected = false;
 let currentQR = null;
-
 let pairingInProgress = false;
 let reconnectTimer = null;
 let startingWhatsApp = false;
 
 let geminiStatus = 'NOT_TESTED';
 let geminiLastError = null;
-let activeGeminiModel = null;
 
 // ======================================================
-// HELPER FUNCTIONS
-// ======================================================
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function getGeminiModels() {
-  return [
-    ...new Set([
-      config.geminiModel,
-      config.geminiFallbackModel
-    ].filter(Boolean))
-  ];
-}
-
-function isRetryableStatus(status) {
-  return [429, 500, 502, 503, 504].includes(status);
-}
-
-function formatPairingCode(code) {
-  const clean = String(code || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
-  if (clean.length === 8) {
-    return `${clean.slice(0, 4)}-${clean.slice(4)}`;
-  }
-  return clean;
-}
-
-// ======================================================
-// MONGODB CONNECTION
+// MONGODB AUTHENTICATION STORAGE
 // ======================================================
 
 function serialize(value) {
@@ -164,10 +143,6 @@ async function connectMongoDB() {
   });
 }
 
-// ======================================================
-// WHATSAPP MONGODB AUTHENTICATION
-// ======================================================
-
 async function useMongoAuthState() {
   info('AUTH', 'Loading WhatsApp credentials from MongoDB.');
 
@@ -181,9 +156,11 @@ async function useMongoAuthState() {
 
   if (credsDocument?.data) {
     creds = deserialize(credsDocument.data);
+
     success('AUTH', 'Existing WhatsApp credentials found.');
   } else {
     creds = initAuthCreds();
+
     success('AUTH', 'New WhatsApp credentials initialized.');
   }
 
@@ -208,18 +185,21 @@ async function useMongoAuthState() {
   const keys = {
     get: async (type, ids) => {
       const result = {};
-      if (!ids.length) return result;
 
-      const prefix = `${config.authId}:key:${type}:`;
+      if (!ids.length) return result;
 
       const documents = await authCollection.find({
         _id: {
-          $in: ids.map(id => `${prefix}${id}`)
+          $in: ids.map(
+            id => `${config.authId}:key:${type}:${id}`
+          )
         }
       }).toArray();
 
       for (const document of documents) {
+        const prefix = `${config.authId}:key:${type}:`;
         const id = document._id.substring(prefix.length);
+
         result[id] = deserialize(document.data);
       }
 
@@ -231,7 +211,8 @@ async function useMongoAuthState() {
 
       for (const [type, entries] of Object.entries(data)) {
         for (const [id, value] of Object.entries(entries)) {
-          const documentId = `${config.authId}:key:${type}:${id}`;
+          const documentId =
+            `${config.authId}:key:${type}:${id}`;
 
           if (value === null || value === undefined) {
             operations.push({
@@ -272,144 +253,17 @@ async function useMongoAuthState() {
 }
 
 // ======================================================
-// GEMINI API REQUEST WITH AUTOMATIC RETRIES
-// ======================================================
-
-async function requestGeminiModel(model, contents) {
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-
-  let lastError;
-
-  for (let attempt = 1; attempt <= config.geminiMaxRetries; attempt++) {
-    const controller = new AbortController();
-
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, config.geminiTimeoutMs);
-
-    const startedAt = Date.now();
-
-    try {
-      info('GEMINI_REQUEST', 'Sending Gemini request.', {
-        model,
-        attempt,
-        maxAttempts: config.geminiMaxRetries
-      });
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': config.geminiKey
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: config.systemPrompt }]
-          },
-          contents,
-          generationConfig: {
-            temperature: config.geminiTemperature,
-            maxOutputTokens: config.geminiMaxTokens
-          }
-        }),
-        signal: controller.signal
-      });
-
-      const responseText = await response.text();
-
-      let result;
-      try {
-        result = JSON.parse(responseText);
-      } catch {
-        throw new Error(
-          `Invalid Gemini response. HTTP ${response.status}: ` +
-          responseText.substring(0, 400)
-        );
-      }
-
-      if (!response.ok) {
-        const apiMessage =
-          result?.error?.message ||
-          responseText.substring(0, 400);
-
-        const apiError = new Error(
-          `Gemini API HTTP ${response.status}: ${apiMessage}`
-        );
-
-        apiError.status = response.status;
-        apiError.retryable = isRetryableStatus(response.status);
-
-        throw apiError;
-      }
-
-      const candidate = result?.candidates?.[0];
-
-      const answer = candidate?.content?.parts
-        ?.map(part => part.text || '')
-        .join('')
-        .trim();
-
-      if (!answer) {
-        const finishReason = candidate?.finishReason;
-        throw new Error(
-          `Gemini returned no text. Finish reason: ${finishReason || 'UNKNOWN'}`
-        );
-      }
-
-      success('GEMINI_REQUEST', 'Gemini response received.', {
-        model,
-        durationMs: Date.now() - startedAt
-      });
-
-      return answer;
-    } catch (err) {
-      lastError = err;
-
-      if (err.name === 'AbortError') {
-        lastError = new Error(
-          `Gemini request timed out after ${config.geminiTimeoutMs}ms.`
-        );
-        lastError.retryable = true;
-      }
-
-      const retryable =
-        lastError.retryable === true ||
-        (lastError.retryable === undefined &&
-          (lastError.name === 'TypeError' || lastError.name === 'TimeoutError'));
-
-      error('GEMINI_REQUEST', 'Gemini request failed.', lastError);
-
-      if (!retryable || attempt === config.geminiMaxRetries) {
-        throw lastError;
-      }
-
-      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
-
-      warn('GEMINI_RETRY', 'Retrying Gemini request.', {
-        model,
-        attempt,
-        nextAttempt: attempt + 1,
-        delayMs: delay
-      });
-
-      await sleep(delay);
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  throw lastError || new Error('Gemini request failed.');
-}
-
-// ======================================================
-// GEMINI API WITH AUTOMATIC MODEL FALLBACK
+// GEMINI API
 // ======================================================
 
 async function askGemini(prompt, history = []) {
   if (!config.geminiKey) {
     throw new Error('GEMINI_API_KEY is missing.');
   }
+
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/` +
+    `${encodeURIComponent(config.geminiModel)}:generateContent`;
 
   const contents = [];
 
@@ -431,61 +285,115 @@ async function askGemini(prompt, history = []) {
     parts: [{ text: prompt }]
   });
 
-  const models = getGeminiModels();
+  const controller = new AbortController();
 
-  let lastError;
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, config.geminiTimeoutMs);
 
-  for (let index = 0; index < models.length; index++) {
-    const model = models[index];
+  info('GEMINI_REQUEST', 'Sending request to Gemini.', {
+    model: config.geminiModel,
+    timeoutMs: config.geminiTimeoutMs,
+    maxOutputTokens: config.geminiMaxTokens
+  });
+
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': config.geminiKey
+      },
+
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: config.systemPrompt }]
+        },
+
+        contents,
+
+        generationConfig: {
+          temperature: config.geminiTemperature,
+          maxOutputTokens: config.geminiMaxTokens
+        }
+      }),
+
+      signal: controller.signal
+    });
+
+    const responseText = await response.text();
+
+    let result;
 
     try {
-      info('GEMINI_MODEL', 'Trying Gemini model.', {
-        model,
-        fallback: index > 0
-      });
-
-      const answer = await requestGeminiModel(model, contents);
-
-      activeGeminiModel = model;
-      geminiStatus = 'CONNECTED';
-      geminiLastError = null;
-
-      if (index > 0) {
-        success(
-          'GEMINI_FALLBACK',
-          'Backup Gemini model connected successfully.',
-          { model }
-        );
-      }
-
-      return answer;
-    } catch (err) {
-      lastError = err;
-
-      const canFallback =
-        err.retryable === true ||
-        [404, 429, 500, 502, 503, 504].includes(err.status);
-
-      if (!canFallback || index === models.length - 1) {
-        break;
-      }
-
-      warn(
-        'GEMINI_FALLBACK',
-        'Primary model unavailable. Trying backup model.',
-        {
-          failedModel: model,
-          nextModel: models[index + 1],
-          error: err.message
-        }
+      result = JSON.parse(responseText);
+    } catch {
+      throw new Error(
+        `Gemini returned an invalid response. HTTP ${response.status}: ` +
+        responseText.substring(0, 500)
       );
     }
+
+    if (!response.ok) {
+      const apiMessage =
+        result?.error?.message ||
+        responseText.substring(0, 500);
+
+      throw new Error(
+        `Gemini API HTTP ${response.status}: ${apiMessage}`
+      );
+    }
+
+    const answer = result?.candidates?.[0]?.content?.parts
+      ?.map(part => part.text || '')
+      .join('')
+      .trim();
+
+    if (!answer) {
+      throw new Error(
+        'Gemini returned no text. Check the model response and finish reason.'
+      );
+    }
+
+    geminiStatus = 'CONNECTED';
+    geminiLastError = null;
+
+    success('GEMINI_REQUEST', 'Gemini response received.', {
+      durationMs: Date.now() - startedAt
+    });
+
+    return answer;
+
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      geminiStatus = 'TIMEOUT';
+
+      throw new Error(
+        `Gemini request timed out after ${config.geminiTimeoutMs}ms.`
+      );
+    }
+
+    if (
+      err.name === 'TimeoutError' ||
+      err.code === 23
+    ) {
+      geminiStatus = 'TIMEOUT';
+    } else {
+      geminiStatus = 'ERROR';
+    }
+
+    geminiLastError = err.message;
+
+    error('GEMINI_NETWORK', 'Gemini request failed.', err);
+
+    throw err;
+
+  } finally {
+    clearTimeout(timeout);
   }
-
-  geminiStatus = 'ERROR';
-  geminiLastError = lastError?.message || 'Unknown Gemini error';
-
-  throw lastError || new Error('All Gemini models failed.');
 }
 
 // ======================================================
@@ -501,16 +409,16 @@ async function testGemini() {
     );
 
     success('GEMINI_TEST', 'Gemini verification successful.', {
-      response: response.substring(0, 150),
-      activeModel: activeGeminiModel
+      response: response.substring(0, 150)
     });
 
     return true;
+
   } catch (err) {
     geminiLastError = err.message;
-    geminiStatus = 'ERROR';
 
     error('GEMINI_TEST', 'Gemini verification failed.', err);
+
     return false;
   }
 }
@@ -526,7 +434,6 @@ function extractMessageText(message) {
     message.ephemeralMessage?.message ||
     message.viewOnceMessage?.message ||
     message.viewOnceMessageV2?.message ||
-    message.documentWithCaptionMessage?.message ||
     message;
 
   return (
@@ -553,10 +460,19 @@ async function generateReply(chatId, userMessage) {
 
   const updatedHistory = [
     ...history,
-    { role: 'user', text: userMessage },
-    { role: 'model', text: reply }
+
+    {
+      role: 'user',
+      text: userMessage
+    },
+
+    {
+      role: 'model',
+      text: reply
+    }
   ];
 
+  // Keep the most recent 20 conversation messages.
   messageCache.set(chatId, updatedHistory.slice(-20));
 
   return reply;
@@ -567,11 +483,8 @@ async function generateReply(chatId, userMessage) {
 // ======================================================
 
 async function startWhatsApp() {
-  if (startingWhatsApp || whatsappConnected) {
-    warn(
-      'WHATSAPP_START',
-      'WhatsApp is already starting or connected.'
-    );
+  if (startingWhatsApp) {
+    warn('WHATSAPP_START', 'WhatsApp startup already in progress.');
     return;
   }
 
@@ -580,19 +493,30 @@ async function startWhatsApp() {
   try {
     info('WHATSAPP_START', 'Starting WhatsApp connection.');
 
-    const { state, saveCreds } = await useMongoAuthState();
+    const { state, saveCreds } =
+      await useMongoAuthState();
 
     info('WHATSAPP_SOCKET', 'Creating WhatsApp socket.');
 
     const socket = makeWASocket({
       auth: state,
+
       logger: pino({ level: 'silent' }),
+
       printQRInTerminal: false,
-      browser: [config.botName, 'Chrome', '1.0.0'],
+
+      browser: [
+        config.botName,
+        'Chrome',
+        '1.0.0'
+      ],
+
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
+
       markOnlineOnConnect: true,
+
       syncFullHistory: false
     });
 
@@ -611,15 +535,23 @@ async function startWhatsApp() {
     });
 
     socket.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
+      const {
+        connection,
+        lastDisconnect,
+        qr
+      } = update;
 
       if (qr) {
         currentQR = qr;
+
         info('WHATSAPP_QR', 'New WhatsApp QR code generated.');
       }
 
       if (connection === 'connecting') {
-        info('WHATSAPP_CONNECTION', 'Connecting to WhatsApp...');
+        info(
+          'WHATSAPP_CONNECTION',
+          'Connecting to WhatsApp...'
+        );
       }
 
       if (connection === 'open') {
@@ -636,13 +568,9 @@ async function startWhatsApp() {
       if (connection === 'close') {
         whatsappConnected = false;
         currentQR = null;
-        pairingInProgress = false;
 
-        if (whatsappSocket === socket) {
-          whatsappSocket = null;
-        }
-
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode;
 
         warn(
           'WHATSAPP_CONNECTION',
@@ -656,13 +584,13 @@ async function startWhatsApp() {
             'WhatsApp logged out. A new pairing is required.',
             lastDisconnect?.error
           );
+
           return;
         }
 
         if (!reconnectTimer) {
           reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
-
             startWhatsApp().catch(err => {
               error(
                 'WHATSAPP_RECONNECT',
@@ -684,17 +612,13 @@ async function startWhatsApp() {
           if (message.key.fromMe) continue;
 
           const chatId = message.key.remoteJid;
+
           if (!chatId) continue;
 
-          if (
-            chatId === 'status@broadcast' ||
-            chatId.endsWith('@g.us') ||
-            chatId.endsWith('@newsletter')
-          ) {
-            continue;
-          }
+          if (chatId === 'status@broadcast') continue;
 
           const text = extractMessageText(message.message);
+
           if (!text) continue;
 
           info('WHATSAPP_INCOMING', 'New message received.', {
@@ -707,16 +631,22 @@ async function startWhatsApp() {
               'WHATSAPP_MESSAGE',
               'Message received while WhatsApp is disconnected.'
             );
+
             continue;
           }
 
           const reply = await generateReply(chatId, text);
 
-          await socket.sendMessage(chatId, { text: reply });
-
-          success('WHATSAPP_REPLY', 'AI reply sent successfully.', {
-            chatId
+          await socket.sendMessage(chatId, {
+            text: reply
           });
+
+          success(
+            'WHATSAPP_REPLY',
+            'AI reply sent successfully.',
+            { chatId }
+          );
+
         } catch (err) {
           error(
             'WHATSAPP_MESSAGE',
@@ -731,9 +661,12 @@ async function startWhatsApp() {
       'WHATSAPP_SOCKET',
       'WhatsApp socket created and event handlers registered.'
     );
+
   } catch (err) {
     error('WHATSAPP_START', 'WhatsApp startup failed.', err);
+
     throw err;
+
   } finally {
     startingWhatsApp = false;
   }
@@ -745,7 +678,6 @@ async function startWhatsApp() {
 
 app.get('/', (req, res) => {
   res.send(`
-    <!DOCTYPE html>
     <html>
       <head>
         <title>${config.botName}</title>
@@ -756,95 +688,13 @@ app.get('/', (req, res) => {
         <p>WhatsApp AI Assistant</p>
         <p>WhatsApp: ${whatsappConnected ? 'ONLINE' : 'OFFLINE'}</p>
         <p>Gemini: ${geminiStatus}</p>
-        <p>Active model: ${activeGeminiModel || 'Not selected'}</p>
-        <p><a href="/pair">Link with phone number</a></p>
-        <p><a href="/qr">WhatsApp QR code</a></p>
         <p><a href="/health">Health check</a></p>
         <p><a href="/status">Bot status</a></p>
+        <p><a href="/qr">WhatsApp QR code</a></p>
       </body>
     </html>
   `);
 });
-
-// ======================================================
-// PHONE PAIRING PAGE
-// ======================================================
-
-app.get('/pair', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Link WhatsApp by Phone Number</title>
-        <style>
-          body { font-family: Arial, sans-serif; text-align: center; padding: 30px; max-width: 440px; margin: auto; }
-          input { width: 100%; padding: 12px; font-size: 16px; margin: 12px 0; box-sizing: border-box; }
-          button { width: 100%; padding: 12px; font-size: 16px; cursor: pointer; }
-          .code { font-size: 28px; font-weight: bold; letter-spacing: 4px; margin: 20px 0; padding: 14px; background: #f4f4f4; border-radius: 6px; }
-          .error { color: #b00020; margin-top: 12px; }
-          .info { color: #333; margin-top: 12px; }
-        </style>
-      </head>
-      <body>
-        <h2>Link with Phone Number</h2>
-        <p>Enter your WhatsApp number including country code (no + or spaces, e.g. <code>254712345678</code>).</p>
-
-        <form id="pairForm">
-          <input
-            id="phoneInput"
-            type="tel"
-            placeholder="254712345678"
-            required
-          />
-          <button id="submitBtn" type="submit">Get Pairing Code</button>
-        </form>
-
-        <div id="result"></div>
-        <p style="margin-top:24px;"><a href="/">Back to Home</a> · <a href="/qr">Use QR Code instead</a></p>
-
-        <script>
-          const form = document.getElementById('pairForm');
-          const phoneInput = document.getElementById('phoneInput');
-          const submitBtn = document.getElementById('submitBtn');
-          const resultDiv = document.getElementById('result');
-
-          form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const phone = phoneInput.value.replace(/\\D/g, '');
-            submitBtn.disabled = true;
-            resultDiv.innerHTML = '<p class="info">Requesting pairing code...</p>';
-
-            try {
-              const res = await fetch('/request-pairing', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone })
-              });
-              const data = await res.json();
-
-              if (!res.ok || !data.success) {
-                resultDiv.innerHTML = '<p class="error">' + (data.error || 'Failed to get pairing code.') + '</p>';
-              } else {
-                resultDiv.innerHTML =
-                  '<div class="code">' + data.pairingCode + '</div>' +
-                  '<p class="info">Open WhatsApp &rarr; Linked devices &rarr; Link a device &rarr; Link with phone number instead, then enter this code.</p>';
-              }
-            } catch (err) {
-              resultDiv.innerHTML = '<p class="error">Network error: ' + err.message + '</p>';
-            } finally {
-              submitBtn.disabled = false;
-            }
-          });
-        </script>
-      </body>
-    </html>
-  `);
-});
-
-// ======================================================
-// HEALTH CHECK
-// ======================================================
 
 app.get('/health', (req, res) => {
   const ready =
@@ -857,15 +707,10 @@ app.get('/health', (req, res) => {
     bot: config.botName,
     whatsapp: whatsappConnected ? 'CONNECTED' : 'DISCONNECTED',
     gemini: geminiStatus,
-    activeGeminiModel,
     mongodb: db ? 'CONNECTED' : 'DISCONNECTED',
     geminiError: geminiLastError
   });
 });
-
-// ======================================================
-// BOT STATUS
-// ======================================================
 
 app.get('/status', (req, res) => {
   res.json({
@@ -873,18 +718,11 @@ app.get('/status', (req, res) => {
     whatsappConnected,
     geminiStatus,
     geminiModel: config.geminiModel,
-    geminiFallbackModel: config.geminiFallbackModel,
-    activeGeminiModel,
-    geminiLastError,
     mongodbConnected: Boolean(db),
     pairingInProgress,
     qrAvailable: Boolean(currentQR)
   });
 });
-
-// ======================================================
-// WHATSAPP QR CODE
-// ======================================================
 
 app.get('/qr', async (req, res) => {
   try {
@@ -901,36 +739,33 @@ app.get('/qr', async (req, res) => {
     const image = await QRCode.toDataURL(currentQR);
 
     res.send(`
-      <!DOCTYPE html>
       <html>
         <head>
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>WhatsApp QR Code</title>
         </head>
-        <body style="text-align:center;font-family:Arial;padding:20px">
+        <body style="text-align:center;font-family:Arial">
           <h2>Scan with WhatsApp</h2>
           <img src="${image}" style="width:300px;max-width:90%">
           <p>Open WhatsApp → Linked devices → Link a device.</p>
-          <p><a href="/pair">Link with phone number instead</a></p>
           <p>Refresh this page if the QR code expires.</p>
         </body>
       </html>
     `);
+
   } catch (err) {
     error('QR_ROUTE', 'Could not generate QR code.', err);
+
     res.status(500).send('Could not generate QR code.');
   }
 });
 
-// ======================================================
-// WHATSAPP PAIRING CODE
-// ======================================================
-
 app.post('/request-pairing', async (req, res) => {
   try {
-    const phone = String(req.body.phone || '').replace(/\D/g, '');
+    const phone = String(req.body.phone || '')
+      .replace(/\D/g, '');
 
-    if (!phone || phone.length < 10 || phone.length > 15) {
+    if (!phone || phone.length < 10) {
       return res.status(400).json({
         success: false,
         error: 'Provide a valid phone number including country code.'
@@ -962,30 +797,34 @@ app.post('/request-pairing', async (req, res) => {
 
     info('WHATSAPP_PAIRING', 'Requesting WhatsApp pairing code.');
 
-    const rawCode = await whatsappSocket.requestPairingCode(phone);
-    const code = formatPairingCode(rawCode);
+    const code = await whatsappSocket.requestPairingCode(phone);
 
-    success('WHATSAPP_PAIRING', 'WhatsApp pairing code generated.');
+    success(
+      'WHATSAPP_PAIRING',
+      'WhatsApp pairing code generated.'
+    );
 
     res.json({
       success: true,
       pairingCode: code
     });
+
   } catch (err) {
-    error('WHATSAPP_PAIRING', 'Could not generate pairing code.', err);
+    error(
+      'WHATSAPP_PAIRING',
+      'Could not generate pairing code.',
+      err
+    );
 
     res.status(500).json({
       success: false,
       error: err.message
     });
+
   } finally {
     pairingInProgress = false;
   }
 });
-
-// ======================================================
-// SEND WHATSAPP MESSAGE
-// ======================================================
 
 app.post('/send', async (req, res) => {
   try {
@@ -996,7 +835,9 @@ app.post('/send', async (req, res) => {
       });
     }
 
-    const phone = String(req.body.phone || '').replace(/\D/g, '');
+    const phone = String(req.body.phone || '')
+      .replace(/\D/g, '');
+
     const message = String(req.body.message || '').trim();
 
     if (!phone || !message) {
@@ -1008,14 +849,19 @@ app.post('/send', async (req, res) => {
 
     const jid = `${phone}@s.whatsapp.net`;
 
-    await whatsappSocket.sendMessage(jid, { text: message });
+    await whatsappSocket.sendMessage(jid, {
+      text: message
+    });
 
-    success('WHATSAPP_SEND', 'Message sent successfully.', { jid });
+    success('WHATSAPP_SEND', 'Message sent successfully.', {
+      jid
+    });
 
     res.json({
       success: true,
       message: 'Message sent successfully.'
     });
+
   } catch (err) {
     error('WHATSAPP_SEND', 'Message sending failed.', err);
 
@@ -1032,13 +878,21 @@ app.post('/send', async (req, res) => {
 
 async function startServer() {
   info('STARTUP', 'BOT STARTUP BEGIN');
+
   info('CONFIG', `Bot: ${config.botName}`);
-  info('CONFIG', `Gemini primary model: ${config.geminiModel}`);
-  info('CONFIG', `Gemini fallback model: ${config.geminiFallbackModel}`);
-  info('CONFIG', 'Gemini API key present: ' + Boolean(config.geminiKey));
-  info('CONFIG', 'MongoDB URI present: ' + Boolean(config.mongodbUri));
-  info('CONFIG', `Gemini timeout: ${config.geminiTimeoutMs}ms`);
-  info('CONFIG', `Gemini retries: ${config.geminiMaxRetries}`);
+  info('CONFIG', `Gemini model: ${config.geminiModel}`);
+
+  info('CONFIG', 'Gemini API key present: ' +
+    Boolean(config.geminiKey));
+
+  info('CONFIG', 'MongoDB URI present: ' +
+    Boolean(config.mongodbUri));
+
+  info('CONFIG', 'Gemini timeout: ' +
+    `${config.geminiTimeoutMs}ms`);
+
+  info('CONFIG', 'Gemini output allowance: ' +
+    config.geminiMaxTokens);
 
   await connectMongoDB();
 
@@ -1048,10 +902,13 @@ async function startServer() {
     });
   });
 
+  // Gemini verification runs in the background.
+  // A slow Gemini response will not prevent WhatsApp from starting.
   testGemini().catch(err => {
     error('GEMINI_TEST', 'Background Gemini test failed.', err);
   });
 
+  // WhatsApp starts independently of the Gemini test.
   await startWhatsApp();
 
   success('STARTUP', 'Startup sequence completed.');
@@ -1065,14 +922,8 @@ async function shutdown(signal) {
   warn('SHUTDOWN', `Received ${signal}. Shutting down...`);
 
   try {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-
     if (whatsappSocket) {
       whatsappSocket.end(undefined);
-      whatsappSocket = null;
     }
 
     if (mongoClient) {
@@ -1080,16 +931,13 @@ async function shutdown(signal) {
     }
 
     success('SHUTDOWN', 'Shutdown completed.');
+
   } catch (err) {
     error('SHUTDOWN', 'Shutdown error.', err);
   }
 
   process.exit(0);
 }
-
-// ======================================================
-// PROCESS ERROR HANDLERS
-// ======================================================
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
