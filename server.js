@@ -9,7 +9,8 @@ const makeWASocket = require('@whiskeysockets/baileys').default;
 
 const {
   useMultiFileAuthState,
-  DisconnectReason
+  DisconnectReason,
+  fetchLatestWaWebVersion
 } = require('@whiskeysockets/baileys');
 
 const QRCode = require('qrcode');
@@ -18,66 +19,57 @@ const NodeCache = require('node-cache');
 const pino = require('pino');
 
 // =====================================================
-// CONFIGURATION
+// 1. CONFIGURATION
 // =====================================================
 
 const config = {
-  server: {
-    port: process.env.PORT || 3000
-  },
+  port: process.env.PORT || 3000,
 
-  whatsapp: {
-    sessionPath: process.env.SESSION_PATH || './.baileys_auth'
-  },
+  sessionPath:
+    process.env.SESSION_PATH || './.baileys_auth',
 
-  bot: {
-    name: process.env.BOT_NAME || 'Smart Assistant',
+  botName:
+    process.env.BOT_NAME || 'Smart Assistant',
 
-    personality:
-      process.env.BOT_PERSONALITY ||
-      'You are a helpful, friendly and intelligent WhatsApp assistant. Answer clearly and naturally. Keep replies conversational and concise unless more detail is requested.',
+  personality:
+    process.env.BOT_PERSONALITY ||
+    'You are a helpful, intelligent, friendly WhatsApp assistant. Answer naturally, accurately and clearly. Keep conversations engaging.',
 
-    maxHistory: parseInt(
-      process.env.MAX_HISTORY_MESSAGES || '10',
-      10
-    )
-  },
+  maxHistory: parseInt(
+    process.env.MAX_HISTORY_MESSAGES || '10',
+    10
+  ),
 
-  gemini: {
-    apiKey: process.env.GEMINI_API_KEY,
+  maxTokens: parseInt(
+    process.env.OPENAI_MAX_TOKENS || '1000',
+    10
+  ),
 
-    baseURL:
-      'https://generativelanguage.googleapis.com/v1beta/openai/',
+  temperature: parseFloat(
+    process.env.OPENAI_TEMPERATURE || '0.7'
+  ),
 
-    model:
-      process.env.OPENAI_MODEL || 'gemini-3.8-flash',
+  geminiKey: process.env.GEMINI_API_KEY,
 
-    maxTokens: parseInt(
-      process.env.OPENAI_MAX_TOKENS || '1000',
-      10
-    ),
+  geminiModel:
+    process.env.OPENAI_MODEL || 'gemini-2.5-flash',
 
-    temperature: parseFloat(
-      process.env.OPENAI_TEMPERATURE || '0.7'
-    )
-  }
+  geminiURL:
+    'https://generativelanguage.googleapis.com/v1beta/openai/'
 };
 
 // =====================================================
-// GEMINI AI SETUP
+// 2. GEMINI AI SETUP
 // =====================================================
 
-if (!config.gemini.apiKey) {
-  console.error('ERROR: GEMINI_API_KEY is missing!');
+if (!config.geminiKey) {
+  console.error('WARNING: GEMINI_API_KEY is missing!');
 }
 
 const ai = new OpenAI({
-  apiKey: config.gemini.apiKey || 'missing-api-key',
-
-  baseURL: config.gemini.baseURL,
-
+  apiKey: config.geminiKey || 'missing-api-key',
+  baseURL: config.geminiURL,
   timeout: 60000,
-
   maxRetries: 2
 });
 
@@ -87,17 +79,15 @@ const historyCache = new NodeCache({
 });
 
 // =====================================================
-// AI REPLY GENERATOR
+// 3. AI RESPONSE GENERATOR
 // =====================================================
 
 async function generateReply(chatId, userMessage) {
 
   if (!userMessage) return null;
 
-  if (!config.gemini.apiKey) {
-    console.error('Gemini API key is not configured.');
-
-    return '⚠️ AI service is not configured. Please contact the administrator.';
+  if (!config.geminiKey) {
+    return '⚠️ Gemini API key is not configured.';
   }
 
   let history = historyCache.get(chatId) || [];
@@ -110,43 +100,30 @@ async function generateReply(chatId, userMessage) {
   const messages = [
     {
       role: 'system',
-      content: config.bot.personality
+      content: config.personality
     },
     ...history
   ];
 
   try {
 
-    console.log('--------------------------------');
-    console.log('GEMINI AI REQUEST');
-    console.log('Model:', config.gemini.model);
+    console.log('========== GEMINI REQUEST ==========');
+    console.log('Model:', config.geminiModel);
     console.log('Chat:', chatId);
-    console.log('--------------------------------');
 
     const response = await ai.chat.completions.create({
-
-      model: config.gemini.model,
-
-      messages: messages,
-
-      max_tokens: config.gemini.maxTokens,
-
-      temperature: config.gemini.temperature
-
+      model: config.geminiModel,
+      messages,
+      max_tokens: config.maxTokens,
+      temperature: config.temperature
     });
 
     const reply =
       response.choices?.[0]?.message?.content;
 
     if (!reply || typeof reply !== 'string') {
-
-      console.error('Gemini returned an empty response.');
-
-      return 'Sorry, I could not generate a response. Please try again.';
-
+      throw new Error('Gemini returned an empty response.');
     }
-
-    // Save conversation history.
 
     history.push({
       role: 'assistant',
@@ -155,58 +132,50 @@ async function generateReply(chatId, userMessage) {
 
     historyCache.set(
       chatId,
-      history.slice(-config.bot.maxHistory * 2)
+      history.slice(-config.maxHistory * 2)
     );
 
-    console.log('GEMINI SUCCESS: Reply generated.');
+    console.log('GEMINI SUCCESS');
 
     return reply;
 
   } catch (error) {
 
     console.error('========== GEMINI ERROR ==========');
-
     console.error('Message:', error.message);
     console.error('Status:', error.status);
     console.error('Code:', error.code);
     console.error('Type:', error.type);
-
-    if (error.response) {
-      console.error('Response:', error.response.data);
-    }
-
-    console.error('Model:', config.gemini.model);
-
     console.error('===================================');
 
-    // Remove the failed message from history.
+    // Remove failed user message from history.
 
     history.pop();
 
     historyCache.set(
       chatId,
-      history.slice(-config.bot.maxHistory * 2)
+      history.slice(-config.maxHistory * 2)
     );
 
     if (error.status === 401 || error.status === 403) {
-      return '⚠️ Gemini API authentication failed. Please check the API configuration.';
+      return '⚠️ Gemini authentication failed. Please check the API key.';
     }
 
     if (error.status === 429) {
-      return '⚠️ Gemini API limit reached. Please try again shortly.';
+      return '⚠️ Gemini request limit reached. Please try again later.';
     }
 
     if (error.status === 404) {
-      return '⚠️ Gemini model not found. Please check the model configuration.';
+      return '⚠️ Gemini model not found. Check your model configuration.';
     }
 
-    return '⚠️ Gemini is temporarily unavailable. Please try again shortly.';
+    return '⚠️ Gemini is temporarily unavailable. Please try again.';
 
   }
 }
 
 // =====================================================
-// EXPRESS SERVER
+// 4. EXPRESS SERVER
 // =====================================================
 
 const app = express();
@@ -217,19 +186,32 @@ app.use(express.json({
 
 app.use(express.static(__dirname));
 
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// =====================================================
+// 5. WHATSAPP GLOBAL VARIABLES
+// =====================================================
+
 let sock = null;
-let authState = null;
 
 let isConnected = false;
+
 let latestQRDataUrl = null;
+
 let pairingCode = null;
+
 let pairingReady = false;
+
 let pairingInProgress = false;
+
 let isConnecting = false;
+
 let reconnectTimer = null;
 
 // =====================================================
-// PHONE NUMBER VALIDATION
+// 6. PHONE NUMBER VALIDATION
 // =====================================================
 
 function normalizePhoneNumber(input) {
@@ -242,57 +224,42 @@ function normalizePhoneNumber(input) {
     phone = '254' + phone.substring(1);
   }
 
-  // Validate international number.
+  // Kenyan mobile numbers.
 
-  if (!/^[1-9]\d{7,14}$/.test(phone)) {
-    return null;
+  if (/^254[17]\d{8}$/.test(phone)) {
+    return phone;
   }
 
-  return phone;
+  // Other international numbers.
+
+  if (/^[1-9]\d{7,14}$/.test(phone)) {
+    return phone;
+  }
+
+  return null;
 }
 
 // =====================================================
-// HOME PAGE
-// =====================================================
-
-app.get('/', (req, res) => {
-
-  res.sendFile(
-    path.join(__dirname, 'index.html')
-  );
-
-});
-
-// =====================================================
-// HEALTH CHECK
+// 7. HEALTH CHECK
 // =====================================================
 
 app.get('/health', (req, res) => {
 
   res.json({
-
     status: 'ok',
-
-    bot: config.bot.name,
-
+    bot: config.botName,
     aiProvider: 'Google Gemini',
-
-    aiModel: config.gemini.model,
-
-    aiConfigured: !!config.gemini.apiKey,
-
+    aiModel: config.geminiModel,
+    aiConfigured: !!config.geminiKey,
     whatsappReady: isConnected,
-
-    pairingReady: pairingReady,
-
+    pairingReady,
     qrPending: !!latestQRDataUrl
-
   });
 
 });
 
 // =====================================================
-// WHATSAPP LOGIN PAGE
+// 8. WHATSAPP LOGIN PAGE
 // =====================================================
 
 app.get('/qr', (req, res) => {
@@ -311,8 +278,8 @@ app.get('/qr', (req, res) => {
         background:#f0f2f5;
         font-family:Arial;
         display:flex;
-        align-items:center;
         justify-content:center;
+        align-items:center;
         min-height:100vh;
       ">
 
@@ -323,7 +290,7 @@ app.get('/qr', (req, res) => {
           text-align:center;
         ">
 
-          <h2 style="color:#25d366">
+          <h2 style="color:#25d366;">
             ✅ WhatsApp Connected!
           </h2>
 
@@ -343,7 +310,7 @@ app.get('/qr', (req, res) => {
 
   let contentHtml = '';
 
-  // PAIRING CODE
+  // PAIRING CODE DISPLAY
 
   if (pairingCode) {
 
@@ -386,7 +353,7 @@ app.get('/qr', (req, res) => {
           line-height:2;
         ">
 
-          1. Open WhatsApp.<br>
+          1. Open WhatsApp on your phone.<br>
           2. Go to Linked Devices.<br>
           3. Tap Link a Device.<br>
           4. Select Link with phone number instead.<br>
@@ -407,7 +374,7 @@ app.get('/qr', (req, res) => {
 
   }
 
-  // QR CODE
+  // QR CODE DISPLAY
 
   else if (latestQRDataUrl) {
 
@@ -440,8 +407,6 @@ app.get('/qr', (req, res) => {
 
   }
 
-  // WAITING
-
   else {
 
     contentHtml = `
@@ -460,7 +425,7 @@ app.get('/qr', (req, res) => {
 
   }
 
-  // PHONE INPUT
+  // PHONE NUMBER INPUT
 
   let inputHtml = '';
 
@@ -541,8 +506,7 @@ app.get('/qr', (req, res) => {
           }
 
           button.disabled = true;
-
-          button.innerText = 'Generating...';
+          button.innerText = 'Generating Code...';
 
           status.innerText = 'Please wait...';
 
@@ -566,7 +530,6 @@ app.get('/qr', (req, res) => {
             status.innerText = error.message;
 
             button.disabled = false;
-
             button.innerText = 'Get Pairing Code';
 
           }
@@ -631,7 +594,7 @@ app.get('/qr', (req, res) => {
 });
 
 // =====================================================
-// REQUEST WHATSAPP PAIRING CODE
+// 9. REQUEST PAIRING CODE
 // =====================================================
 
 app.get('/request-pairing', async (req, res) => {
@@ -641,23 +604,17 @@ app.get('/request-pairing', async (req, res) => {
   if (!phone) {
 
     return res.status(400).json({
-
       success: false,
-
       error: 'Invalid number. Example: 254712345678'
-
     });
 
   }
 
-  if (!sock || !authState) {
+  if (!sock) {
 
     return res.status(503).json({
-
       success: false,
-
-      error: 'WhatsApp is still starting.'
-
+      error: 'WhatsApp socket is not ready.'
     });
 
   }
@@ -665,23 +622,17 @@ app.get('/request-pairing', async (req, res) => {
   if (isConnected) {
 
     return res.status(409).json({
-
       success: false,
-
       error: 'WhatsApp is already connected.'
-
     });
 
   }
 
-  if (authState.creds.registered) {
+  if (sock.authState.creds.registered) {
 
     return res.status(409).json({
-
       success: false,
-
-      error: 'An existing WhatsApp session is registered.'
-
+      error: 'Existing WhatsApp session is registered.'
     });
 
   }
@@ -689,11 +640,8 @@ app.get('/request-pairing', async (req, res) => {
   if (!pairingReady) {
 
     return res.status(503).json({
-
       success: false,
-
       error: 'WhatsApp is not ready. Wait a few seconds and retry.'
-
     });
 
   }
@@ -701,11 +649,8 @@ app.get('/request-pairing', async (req, res) => {
   if (pairingInProgress) {
 
     return res.status(409).json({
-
       success: false,
-
-      error: 'Pairing request already processing.'
-
+      error: 'Pairing request is already processing.'
     });
 
   }
@@ -714,7 +659,9 @@ app.get('/request-pairing', async (req, res) => {
 
   try {
 
-    console.log('Requesting WhatsApp pairing code...');
+    console.log('Requesting pairing code for:', phone);
+
+    // Prevent duplicate pairing requests.
 
     pairingReady = false;
 
@@ -728,25 +675,17 @@ app.get('/request-pairing', async (req, res) => {
     console.log('Pairing code generated successfully.');
 
     return res.json({
-
       success: true,
-
       code: pairingCode
-
     });
 
   } catch (error) {
 
     console.error('PAIRING ERROR:', error);
 
-    pairingReady = true;
-
     return res.status(500).json({
-
       success: false,
-
-      error: error.message || 'Pairing failed.'
-
+      error: error.message || 'Pairing code generation failed.'
     });
 
   } finally {
@@ -758,7 +697,7 @@ app.get('/request-pairing', async (req, res) => {
 });
 
 // =====================================================
-// SEND WHATSAPP MESSAGE
+// 10. SEND WHATSAPP MESSAGE
 // =====================================================
 
 app.post('/send', async (req, res) => {
@@ -768,11 +707,8 @@ app.post('/send', async (req, res) => {
   if (!sock || !isConnected) {
 
     return res.status(503).json({
-
       success: false,
-
       error: 'WhatsApp is not connected.'
-
     });
 
   }
@@ -780,11 +716,8 @@ app.post('/send', async (req, res) => {
   if (!to || !message) {
 
     return res.status(400).json({
-
       success: false,
-
       error: 'Phone number and message are required.'
-
     });
 
   }
@@ -794,11 +727,8 @@ app.post('/send', async (req, res) => {
   if (!phone) {
 
     return res.status(400).json({
-
       success: false,
-
       error: 'Invalid phone number.'
-
     });
 
   }
@@ -813,11 +743,8 @@ app.post('/send', async (req, res) => {
     );
 
     res.json({
-
       success: true,
-
       message: 'Message sent successfully.'
-
     });
 
   } catch (error) {
@@ -825,11 +752,8 @@ app.post('/send', async (req, res) => {
     console.error('SEND ERROR:', error);
 
     res.status(500).json({
-
       success: false,
-
       error: error.message
-
     });
 
   }
@@ -837,20 +761,20 @@ app.post('/send', async (req, res) => {
 });
 
 // =====================================================
-// START SERVER
+// 11. START EXPRESS SERVER
 // =====================================================
 
-app.listen(config.server.port, '0.0.0.0', () => {
+app.listen(config.port, '0.0.0.0', () => {
 
   console.log('====================================');
 
-  console.log('WHATSAPP AI BOT STARTED');
+  console.log(config.botName + ' STARTED');
 
-  console.log('Port:', config.server.port);
+  console.log('Port:', config.port);
 
   console.log('AI Provider: Google Gemini');
 
-  console.log('AI Model:', config.gemini.model);
+  console.log('AI Model:', config.geminiModel);
 
   console.log('Dashboard: /qr');
 
@@ -861,7 +785,7 @@ app.listen(config.server.port, '0.0.0.0', () => {
 });
 
 // =====================================================
-// WHATSAPP CONNECTION
+// 12. WHATSAPP CONNECTION
 // =====================================================
 
 async function connectToWhatsApp() {
@@ -872,23 +796,49 @@ async function connectToWhatsApp() {
 
   try {
 
-    fs.mkdirSync(config.whatsapp.sessionPath, {
+    fs.mkdirSync(config.sessionPath, {
       recursive: true
     });
 
-    const auth = await useMultiFileAuthState(
-      config.whatsapp.sessionPath
-    );
-
-    authState = auth.state;
-
-    const saveCreds = auth.saveCreds;
+    const {
+      state,
+      saveCreds
+    } = await useMultiFileAuthState(config.sessionPath);
 
     console.log('Loading WhatsApp session...');
 
+    // IMPORTANT:
+    // Fetch the latest WhatsApp Web version.
+
+    console.log('Fetching latest WhatsApp Web version...');
+
+    const latest = await fetchLatestWaWebVersion();
+
+    if (!latest || !latest.version) {
+      throw new Error(
+        'Could not obtain the latest WhatsApp Web version.'
+      );
+    }
+
+    const version = latest.version;
+
+    console.log(
+      'WhatsApp Web Version:',
+      version.join('.')
+    );
+
+    console.log(
+      'Is Latest:',
+      latest.isLatest
+    );
+
+    // CREATE WHATSAPP SOCKET
+
     sock = makeWASocket({
 
-      auth: authState,
+      version,
+
+      auth: state,
 
       printQRInTerminal: false,
 
@@ -908,12 +858,24 @@ async function connectToWhatsApp() {
 
     isConnecting = false;
 
-    // SAVE AUTHENTICATION
+    // SAVE CREDENTIALS
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async () => {
+
+      try {
+
+        await saveCreds();
+
+      } catch (error) {
+
+        console.error('CREDENTIAL SAVE ERROR:', error);
+
+      }
+
+    });
 
     // =================================================
-    // CONNECTION EVENTS
+    // CONNECTION UPDATE
     // =================================================
 
     sock.ev.on('connection.update', async (update) => {
@@ -924,13 +886,17 @@ async function connectToWhatsApp() {
         qr
       } = update;
 
-      // QR EVENT
+      // QR EVENT / PAIRING READY
 
       if (qr) {
 
-        pairingReady = true;
+        if (
+          !pairingCode &&
+          !pairingInProgress &&
+          !state.creds.registered
+        ) {
 
-        if (!pairingCode) {
+          pairingReady = true;
 
           try {
 
@@ -939,11 +905,11 @@ async function connectToWhatsApp() {
               margin: 1
             });
 
-            console.log('WhatsApp QR generated.');
+            console.log('QR CODE GENERATED.');
 
           } catch (error) {
 
-            console.error('QR ERROR:', error);
+            console.error('QR GENERATION ERROR:', error);
 
           }
 
@@ -951,7 +917,7 @@ async function connectToWhatsApp() {
 
       }
 
-      // CONNECTED
+      // CONNECTION OPEN
 
       if (connection === 'open') {
 
@@ -965,15 +931,15 @@ async function connectToWhatsApp() {
 
         console.log('====================================');
 
-        console.log('WHATSAPP CONNECTED SUCCESSFULLY!');
+        console.log('✅ WHATSAPP CONNECTED!');
 
-        console.log('GEMINI AI IS READY.');
+        console.log('✅ GEMINI AI READY!');
 
         console.log('====================================');
 
       }
 
-      // DISCONNECTED
+      // CONNECTION CLOSED
 
       if (connection === 'close') {
 
@@ -991,17 +957,23 @@ async function connectToWhatsApp() {
         const shouldReconnect =
           statusCode !== DisconnectReason.loggedOut;
 
-        console.log('WhatsApp connection closed.');
+        console.log('====================================');
 
-        console.log('Disconnect code:', statusCode);
+        console.log('WHATSAPP CONNECTION CLOSED');
+
+        console.log('Disconnect status:', statusCode);
 
         console.log('Reconnect:', shouldReconnect);
+
+        console.log('====================================');
 
         if (shouldReconnect) {
 
           if (reconnectTimer) {
             clearTimeout(reconnectTimer);
           }
+
+          // Reconnect, including after 515 restart.
 
           reconnectTimer = setTimeout(() => {
 
@@ -1014,7 +986,7 @@ async function connectToWhatsApp() {
         } else {
 
           console.log(
-            'WhatsApp logged out. New authentication required.'
+            'WhatsApp logged out. New login required.'
           );
 
         }
@@ -1024,7 +996,7 @@ async function connectToWhatsApp() {
     });
 
     // =================================================
-    // INCOMING MESSAGES
+    // 13. RECEIVE WHATSAPP MESSAGES
     // =================================================
 
     sock.ev.on('messages.upsert', async (event) => {
@@ -1050,6 +1022,10 @@ async function connectToWhatsApp() {
             continue;
           }
 
+          // Ignore group messages if desired.
+          // Remove these two lines if you want group replies.
+          // if (chatId.endsWith('@g.us')) continue;
+
           // Extract message text.
 
           const userMessage =
@@ -1070,13 +1046,13 @@ async function connectToWhatsApp() {
 
           console.log('--------------------------------');
 
-          console.log('NEW MESSAGE:', chatId);
+          console.log('INCOMING MESSAGE:', chatId);
 
-          console.log('MESSAGE:', userMessage);
+          console.log('TEXT:', userMessage);
 
           console.log('--------------------------------');
 
-          // Generate Gemini response.
+          // GENERATE GEMINI RESPONSE
 
           const reply = await generateReply(
             chatId,
@@ -1095,7 +1071,7 @@ async function connectToWhatsApp() {
 
         } catch (error) {
 
-          console.error('MESSAGE ERROR:', error);
+          console.error('MESSAGE PROCESSING ERROR:', error);
 
         }
 
@@ -1126,11 +1102,11 @@ async function connectToWhatsApp() {
 }
 
 // =====================================================
-// START WHATSAPP BOT
+// 14. START WHATSAPP BOT
 // =====================================================
 
 connectToWhatsApp().catch(error => {
 
-  console.error('INITIAL CONNECTION ERROR:', error);
+  console.error('INITIAL WHATSAPP ERROR:', error);
 
 });
