@@ -1,265 +1,597 @@
+
 require('dotenv').config();
 
 const express = require('express');
+const NodeCache = require('node-cache');
 const pino = require('pino');
 const QRCode = require('qrcode');
-const NodeCache = require('node-cache');
 const { MongoClient } = require('mongodb');
 
 const {
   default: makeWASocket,
   DisconnectReason,
   initAuthCreds,
-  BufferJSON,
-  proto
+  BufferJSON
 } = require('@whiskeysockets/baileys');
 
-// =====================================================
+// ======================================================
 // CONFIGURATION
-// =====================================================
+// ======================================================
+
+const config = {
+  port: process.env.PORT || 3000,
+
+  botName: process.env.BOT_NAME || 'Smart Assistant',
+
+  geminiKey: process.env.GEMINI_API_KEY,
+
+  // Primary Gemini model
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+
+  // Backup Gemini model
+  geminiFallbackModel:
+    process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite',
+
+  geminiTimeoutMs: Number(
+    process.env.GEMINI_TIMEOUT_MS || 60000
+  ),
+
+  geminiMaxTokens: Number(
+    process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096
+  ),
+
+  geminiTemperature: Number(
+    process.env.GEMINI_TEMPERATURE || 0.7
+  ),
+
+  // Three attempts per model
+  geminiMaxRetries: Number(
+    process.env.GEMINI_MAX_RETRIES || 3
+  ),
+
+  mongodbUri: process.env.MONGODB_URI,
+
+  mongodbDatabase:
+    process.env.MONGODB_DB_NAME || 'whatsapp_bot',
+
+  authId: process.env.WHATSAPP_AUTH_ID || 'main',
+
+  systemPrompt:
+    process.env.SYSTEM_PROMPT ||
+    'You are a helpful WhatsApp AI assistant. Give clear, friendly and accurate answers.'
+};
+
+// ======================================================
+// LOGGER
+// ======================================================
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  timestamp: pino.stdTimeFunctions.isoTime
+});
+
+function info(step, message, data = {}) {
+  logger.info({ step, ...data }, message);
+}
+
+function success(step, message, data = {}) {
+  logger.info({ step, status: 'SUCCESS', ...data }, message);
+}
+
+function warn(step, message, data = {}) {
+  logger.warn({ step, ...data }, message);
+}
+
+function error(step, message, err) {
+  logger.error({
+    step,
+    message,
+    error: err?.message,
+    name: err?.name,
+    code: err?.code,
+    status: err?.status,
+    stack: err?.stack
+  }, message);
+}
+
+// ======================================================
+// GLOBAL VARIABLES
+// ======================================================
 
 const app = express();
+
 app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-const PORT = process.env.PORT || 10000;
-const MONGODB_URI = process.env.MONGODB_URI;
-const DB_NAME = process.env.MONGODB_DB_NAME || 'whatsapp_bot';
-const AUTH_ID = process.env.WHATSAPP_AUTH_ID || 'main';
+const messageCache = new NodeCache({
+  stdTTL: 3600,
+  checkperiod: 600
+});
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
-const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.8-flash';
-const GEMINI_TIMEOUT = Number(process.env.GEMINI_TIMEOUT_MS) || 120000;
-const GEMINI_MAX_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS) || 2048;
+let mongoClient;
+let db;
+let authCollection;
 
-const SYSTEM_PROMPT =
-  process.env.BOT_SYSTEM_PROMPT ||
-  'You are a helpful and intelligent WhatsApp AI assistant. Answer naturally, politely and accurately. Keep replies clear and suitable for WhatsApp.';
-
-const logger = pino({ level: 'silent' });
-
-const seenMessages = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
-
-const mongoClient = MONGODB_URI ? new MongoClient(MONGODB_URI) : null;
-
-// =====================================================
-// GLOBAL STATE
-// =====================================================
-
-let authCollection = null;
-let mongoConnected = false;
 let whatsappSocket = null;
 let whatsappConnected = false;
-let whatsappState = 'disconnected';
-let qrCodeData = null;
-let startingWhatsApp = false;
-let resettingAuth = false;
+let currentQR = null;
+
 let pairingInProgress = false;
 let reconnectTimer = null;
+let startingWhatsApp = false;
 
-// =====================================================
-// LOGGING
-// =====================================================
+let geminiStatus = 'NOT_TESTED';
+let geminiLastError = null;
+let activeGeminiModel = null;
 
-function logInfo(event, message, extra = {}) {
-  console.log(JSON.stringify({ level: 'INFO', event, message, ...extra, time: new Date().toISOString() }));
-}
-
-function logWarn(event, message, extra = {}) {
-  console.warn(JSON.stringify({ level: 'WARN', event, message, ...extra, time: new Date().toISOString() }));
-}
-
-function logError(event, message, err) {
-  console.error(JSON.stringify({ level: 'ERROR', event, message, error: err?.message || String(err), time: new Date().toISOString() }));
-}
+// ======================================================
+// HELPER FUNCTIONS
+// ======================================================
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function getGeminiModels() {
+  return [
+    ...new Set([
+      config.geminiModel,
+      config.geminiFallbackModel
+    ].filter(Boolean))
+  ];
 }
 
-// =====================================================
-// MONGODB
-// =====================================================
+function isRetryableStatus(status) {
+  return [429, 500, 502, 503, 504].includes(status);
+}
+
+// ======================================================
+// MONGODB CONNECTION
+// ======================================================
+
+function serialize(value) {
+  return JSON.stringify(value, BufferJSON.replacer);
+}
+
+function deserialize(value) {
+  if (!value) return null;
+
+  return JSON.parse(value, BufferJSON.reviver);
+}
 
 async function connectMongoDB() {
-  if (!MONGODB_URI || !mongoClient) {
-    throw new Error('MONGODB_URI is missing.');
+  if (!config.mongodbUri) {
+    throw new Error('MONGODB_URI environment variable is missing.');
   }
+
+  info('MONGODB_CONNECT', 'Connecting to MongoDB...');
+
+  mongoClient = new MongoClient(config.mongodbUri, {
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 30000,
+    socketTimeoutMS: 60000
+  });
+
   await mongoClient.connect();
-  const db = mongoClient.db(DB_NAME);
+
+  db = mongoClient.db(config.mongodbDatabase);
+
   authCollection = db.collection('whatsapp_auth');
-  mongoConnected = true;
-  logInfo('MONGODB_CONNECTED', 'MongoDB connected successfully.');
+
+  success('MONGODB_CONNECT', 'MongoDB connected.', {
+    database: config.mongodbDatabase
+  });
 }
 
-// =====================================================
-// MONGODB WHATSAPP AUTH STORAGE
-// =====================================================
+// ======================================================
+// WHATSAPP MONGODB AUTHENTICATION
+// ======================================================
 
-function deserializeAuthValue(value) {
-  if (value === null || value === undefined) return value;
-  if (typeof value === 'string') return JSON.parse(value, BufferJSON.reviver);
-  return JSON.parse(JSON.stringify(value), BufferJSON.reviver);
-}
+async function useMongoAuthState() {
+  info('AUTH', 'Loading WhatsApp credentials from MongoDB.');
 
-async function useMongoDBAuthState() {
-  if (!authCollection) throw new Error('MongoDB authentication storage is unavailable.');
+  const credsId = `${config.authId}:creds`;
 
-  const credsId = AUTH_ID + ':creds';
-  const storedCreds = await authCollection.findOne({ _id: credsId });
+  const credsDocument = await authCollection.findOne({
+    _id: credsId
+  });
+
   let creds;
 
-  if (storedCreds) {
-    creds = deserializeAuthValue(storedCreds.data ?? storedCreds.creds);
+  if (credsDocument?.data) {
+    creds = deserialize(credsDocument.data);
+
+    success('AUTH', 'Existing WhatsApp credentials found.');
   } else {
     creds = initAuthCreds();
+
+    success('AUTH', 'New WhatsApp credentials initialized.');
   }
 
   const saveCreds = async () => {
     await authCollection.updateOne(
       { _id: credsId },
-      { $set: { data: JSON.stringify(creds, BufferJSON.replacer), updatedAt: new Date() } },
+      {
+        $set: {
+          data: serialize(creds),
+          updatedAt: new Date()
+        }
+      },
       { upsert: true }
+    );
+
+    success(
+      'WHATSAPP_AUTH_SAVE',
+      'WhatsApp credentials saved to MongoDB.'
     );
   };
 
   const keys = {
     get: async (type, ids) => {
       const result = {};
-      if (!ids || ids.length === 0) return result;
 
-      const prefix = AUTH_ID + ':' + type + ':';
-      const documentIds = ids.map(id => prefix + id);
+      if (!ids.length) return result;
 
-      const documents = await authCollection.find({ _id: { $in: documentIds } }).toArray();
+      const prefix = `${config.authId}:key:${type}:`;
+
+      const documents = await authCollection.find({
+        _id: {
+          $in: ids.map(id => `${prefix}${id}`)
+        }
+      }).toArray();
 
       for (const document of documents) {
         const id = document._id.substring(prefix.length);
-        const storedValue = document.data ?? document.value;
-        if (storedValue === undefined) continue;
 
-        let value = deserializeAuthValue(storedValue);
-        if (type === 'app-state-sync-key') {
-          value = proto.Message.AppStateSyncKeyData.fromObject(value);
-        }
-        result[id] = value;
+        result[id] = deserialize(document.data);
       }
+
       return result;
     },
 
-    set: async data => {
+    set: async (data) => {
       const operations = [];
-      for (const [category, entries] of Object.entries(data)) {
-        if (!entries) continue;
+
+      for (const [type, entries] of Object.entries(data)) {
         for (const [id, value] of Object.entries(entries)) {
-          const documentId = AUTH_ID + ':' + category + ':' + id;
+          const documentId =
+            `${config.authId}:key:${type}:${id}`;
+
           if (value === null || value === undefined) {
-            operations.push({ deleteOne: { filter: { _id: documentId } } });
+            operations.push({
+              deleteOne: {
+                filter: { _id: documentId }
+              }
+            });
           } else {
             operations.push({
               updateOne: {
                 filter: { _id: documentId },
-                update: { $set: { data: JSON.stringify(value, BufferJSON.replacer), updatedAt: new Date() } },
+                update: {
+                  $set: {
+                    data: serialize(value),
+                    updatedAt: new Date()
+                  }
+                },
                 upsert: true
               }
             });
           }
         }
       }
-      if (operations.length > 0) {
-        await authCollection.bulkWrite(operations, { ordered: false });
+
+      if (operations.length) {
+        await authCollection.bulkWrite(operations);
       }
     }
   };
 
-  return { state: { creds, keys }, saveCreds };
+  return {
+    state: {
+      creds,
+      keys
+    },
+    saveCreds
+  };
 }
 
-// =====================================================
-// GEMINI AI
-// =====================================================
+// ======================================================
+// GEMINI API REQUEST WITH AUTOMATIC RETRIES
+// ======================================================
 
-async function callGemini(model, prompt) {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is missing.');
+async function requestGeminiModel(model, contents) {
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/` +
+    `${encodeURIComponent(model)}:generateContent`;
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(GEMINI_API_KEY);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: GEMINI_MAX_TOKENS }
-      })
-    });
-
-    const responseText = await response.text();
-    let data;
-
-    try {
-      data = JSON.parse(responseText);
-    } catch {
-      throw new Error('Invalid Gemini response. HTTP ' + response.status);
-    }
-
-    if (!response.ok) {
-      throw new Error('Gemini HTTP ' + response.status + ': ' + (data?.error?.message || responseText));
-    }
-
-    const answer = data?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
-    if (!answer) throw new Error('Gemini returned an empty response using ' + model);
-
-    return answer;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function askGemini(prompt) {
-  const models = [GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter((model, index, array) => model && array.indexOf(model) === index);
   let lastError;
 
-  for (const model of models) {
+  for (
+    let attempt = 1;
+    attempt <= config.geminiMaxRetries;
+    attempt++
+  ) {
+    const controller = new AbortController();
+
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, config.geminiTimeoutMs);
+
+    const startedAt = Date.now();
+
     try {
-      logInfo('GEMINI_REQUEST', 'Sending request to ' + model);
-      const answer = await callGemini(model, prompt);
-      logInfo('GEMINI_SUCCESS', 'Gemini responded using ' + model);
+      info('GEMINI_REQUEST', 'Sending Gemini request.', {
+        model,
+        attempt,
+        maxAttempts: config.geminiMaxRetries
+      });
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': config.geminiKey
+        },
+
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              { text: config.systemPrompt }
+            ]
+          },
+
+          contents,
+
+          generationConfig: {
+            temperature: config.geminiTemperature,
+            maxOutputTokens: config.geminiMaxTokens
+          }
+        }),
+
+        signal: controller.signal
+      });
+
+      const responseText = await response.text();
+
+      let result;
+
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        throw new Error(
+          `Invalid Gemini response. HTTP ${response.status}: ` +
+          responseText.substring(0, 400)
+        );
+      }
+
+      if (!response.ok) {
+        const apiMessage =
+          result?.error?.message ||
+          responseText.substring(0, 400);
+
+        const apiError = new Error(
+          `Gemini API HTTP ${response.status}: ${apiMessage}`
+        );
+
+        apiError.status = response.status;
+
+        apiError.retryable =
+          isRetryableStatus(response.status);
+
+        throw apiError;
+      }
+
+      const candidate = result?.candidates?.[0];
+
+      const answer = candidate?.content?.parts
+        ?.map(part => part.text || '')
+        .join('')
+        .trim();
+
+      if (!answer) {
+        const finishReason = candidate?.finishReason;
+
+        throw new Error(
+          `Gemini returned no text. Finish reason: ${finishReason || 'UNKNOWN'}`
+        );
+      }
+
+      success('GEMINI_REQUEST', 'Gemini response received.', {
+        model,
+        durationMs: Date.now() - startedAt
+      });
+
       return answer;
+
     } catch (err) {
       lastError = err;
-      logError('GEMINI_MODEL_FAILED', 'Gemini model failed: ' + model, err);
+
+      if (err.name === 'AbortError') {
+        lastError = new Error(
+          `Gemini request timed out after ${config.geminiTimeoutMs}ms.`
+        );
+
+        lastError.retryable = true;
+      }
+
+      const retryable =
+        lastError.retryable === true ||
+        lastError.retryable === undefined &&
+        (
+          lastError.name === 'TypeError' ||
+          lastError.name === 'TimeoutError'
+        );
+
+      error(
+        'GEMINI_REQUEST',
+        'Gemini request failed.',
+        lastError
+      );
+
+      if (!retryable || attempt === config.geminiMaxRetries) {
+        throw lastError;
+      }
+
+      const delay = Math.min(
+        1000 * Math.pow(2, attempt - 1),
+        10000
+      );
+
+      warn('GEMINI_RETRY', 'Retrying Gemini request.', {
+        model,
+        attempt,
+        nextAttempt: attempt + 1,
+        delayMs: delay
+      });
+
+      await sleep(delay);
+
+    } finally {
+      clearTimeout(timeout);
     }
   }
+
+  throw lastError || new Error('Gemini request failed.');
+}
+
+// ======================================================
+// GEMINI API WITH AUTOMATIC MODEL FALLBACK
+// ======================================================
+
+async function askGemini(prompt, history = []) {
+  if (!config.geminiKey) {
+    throw new Error('GEMINI_API_KEY is missing.');
+  }
+
+  const contents = [];
+
+  for (const item of history) {
+    if (
+      item &&
+      ['user', 'model'].includes(item.role) &&
+      typeof item.text === 'string'
+    ) {
+      contents.push({
+        role: item.role,
+        parts: [{ text: item.text }]
+      });
+    }
+  }
+
+  contents.push({
+    role: 'user',
+    parts: [{ text: prompt }]
+  });
+
+  const models = getGeminiModels();
+
+  let lastError;
+
+  for (let index = 0; index < models.length; index++) {
+    const model = models[index];
+
+    try {
+      info('GEMINI_MODEL', 'Trying Gemini model.', {
+        model,
+        fallback: index > 0
+      });
+
+      const answer = await requestGeminiModel(
+        model,
+        contents
+      );
+
+      activeGeminiModel = model;
+      geminiStatus = 'CONNECTED';
+      geminiLastError = null;
+
+      if (index > 0) {
+        success(
+          'GEMINI_FALLBACK',
+          'Backup Gemini model connected successfully.',
+          { model }
+        );
+      }
+
+      return answer;
+
+    } catch (err) {
+      lastError = err;
+
+      const canFallback =
+        err.retryable === true ||
+        [404, 429, 500, 502, 503, 504].includes(err.status);
+
+      if (!canFallback || index === models.length - 1) {
+        break;
+      }
+
+      warn(
+        'GEMINI_FALLBACK',
+        'Primary model unavailable. Trying backup model.',
+        {
+          failedModel: model,
+          nextModel: models[index + 1],
+          error: err.message
+        }
+      );
+    }
+  }
+
+  geminiStatus = 'ERROR';
+  geminiLastError = lastError?.message || 'Unknown Gemini error';
+
   throw lastError || new Error('All Gemini models failed.');
 }
 
-// =====================================================
-// MESSAGE EXTRACTION
-// =====================================================
+// ======================================================
+// GEMINI CONNECTION TEST
+// ======================================================
+
+async function testGemini() {
+  info('GEMINI_TEST', 'Starting Gemini API verification.');
+
+  try {
+    const response = await askGemini(
+      'Reply with exactly: Gemini connection successful.'
+    );
+
+    success('GEMINI_TEST', 'Gemini verification successful.', {
+      response: response.substring(0, 150),
+      activeModel: activeGeminiModel
+    });
+
+    return true;
+
+  } catch (err) {
+    geminiLastError = err.message;
+    geminiStatus = 'ERROR';
+
+    error(
+      'GEMINI_TEST',
+      'Gemini verification failed.',
+      err
+    );
+
+    return false;
+  }
+}
+
+// ======================================================
+// WHATSAPP MESSAGE TEXT EXTRACTION
+// ======================================================
 
 function extractMessageText(message) {
   if (!message) return '';
-  let content = message;
-  for (let i = 0; i < 5; i++) {
-    if (content.ephemeralMessage?.message) {
-      content = content.ephemeralMessage.message;
-    } else if (content.viewOnceMessage?.message) {
-      content = content.viewOnceMessage.message;
-    } else if (content.viewOnceMessageV2?.message) {
-      content = content.viewOnceMessageV2.message;
-    } else {
-      break;
-    }
-  }
+
+  const content =
+    message.ephemeralMessage?.message ||
+    message.viewOnceMessage?.message ||
+    message.viewOnceMessageV2?.message ||
+    message.documentWithCaptionMessage?.message ||
+    message;
+
   return (
     content.conversation ||
     content.extendedTextMessage?.text ||
@@ -273,75 +605,87 @@ function extractMessageText(message) {
   ).trim();
 }
 
-// =====================================================
-// INCOMING WHATSAPP MESSAGES
-// =====================================================
+// ======================================================
+// AI REPLY GENERATION
+// ======================================================
 
-async function handleIncomingMessage(socket, message) {
-  try {
-    if (!message || !message.message) return;
-    if (message.key?.fromMe) return;
+async function generateReply(chatId, userMessage) {
+  const history = messageCache.get(chatId) || [];
 
-    const jid = message.key?.remoteJid;
-    if (!jid || jid === 'status@broadcast') return;
+  const reply = await askGemini(
+    userMessage,
+    history
+  );
 
-    const messageId = message.key?.id;
-    if (messageId && seenMessages.has(messageId)) return;
-    if (messageId) seenMessages.set(messageId, true);
+  const updatedHistory = [
+    ...history,
 
-    const text = extractMessageText(message.message);
-    if (!text) return;
+    {
+      role: 'user',
+      text: userMessage
+    },
 
-    logInfo('WHATSAPP_MESSAGE', 'Incoming message received.', { sender: jid });
+    {
+      role: 'model',
+      text: reply
+    }
+  ];
 
-    const answer = await askGemini(text);
-    if (!answer) return;
+  // Keep the last 20 messages.
+  messageCache.set(
+    chatId,
+    updatedHistory.slice(-20)
+  );
 
-    if (socket !== whatsappSocket || !whatsappConnected) return;
-
-    await socket.sendMessage(jid, { text: answer }, { quoted: message });
-    logInfo('WHATSAPP_REPLY_SENT', 'AI reply sent successfully.', { recipient: jid });
-
-  } catch (err) {
-    logError('MESSAGE_HANDLER_ERROR', 'Could not process WhatsApp message.', err);
-  }
+  return reply;
 }
 
-// =====================================================
-// START WHATSAPP
-// =====================================================
+// ======================================================
+// WHATSAPP CONNECTION
+// ======================================================
 
 async function startWhatsApp() {
-  if (startingWhatsApp || resettingAuth) return;
-  if (!authCollection) {
-    logWarn('WHATSAPP_START', 'Waiting for MongoDB authentication storage.');
+  if (startingWhatsApp || whatsappConnected) {
+    warn(
+      'WHATSAPP_START',
+      'WhatsApp is already starting or connected.'
+    );
+
     return;
   }
 
   startingWhatsApp = true;
 
   try {
-    whatsappState = 'connecting';
-    logInfo('WHATSAPP_START', 'Starting WhatsApp socket.');
+    info('WHATSAPP_START', 'Starting WhatsApp connection.');
 
-    // CRITICAL FIX: Hardcoded recent version to prevent silent pairing rejections
-    // The dynamic fetcher was returning an outdated version (isLatest: false)
-    const version = [2, 3000, 1043857760]; 
-    logInfo('WA_VERSION', `Using forced WA v${version.join('.')}`);
+    const { state, saveCreds } =
+      await useMongoAuthState();
 
-    const { state, saveCreds } = await useMongoDBAuthState();
+    info('WHATSAPP_SOCKET', 'Creating WhatsApp socket.');
 
     const socket = makeWASocket({
-      version, 
       auth: state,
-      logger,
+
+      logger: pino({ level: 'silent' }),
+
       printQRInTerminal: false,
-      browser: ['Manny AI WhatsApp Bot', 'Chrome', '120.0.0'],
-      markOnlineOnConnect: false,
-      syncFullHistory: false,
+
+      browser: [
+        config.botName,
+        'Chrome',
+        '1.0.0'
+      ],
+
       connectTimeoutMs: 60000,
+
       defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000
+
+      keepAliveIntervalMs: 25000,
+
+      markOnlineOnConnect: true,
+
+      syncFullHistory: false
     });
 
     whatsappSocket = socket;
@@ -349,445 +693,586 @@ async function startWhatsApp() {
     socket.ev.on('creds.update', async () => {
       try {
         await saveCreds();
+
       } catch (err) {
-        logError('AUTH_SAVE_ERROR', 'Could not save WhatsApp credentials.', err);
+        error(
+          'WHATSAPP_AUTH_SAVE',
+          'Could not save WhatsApp credentials.',
+          err
+        );
       }
     });
 
-    // CONNECTION EVENTS
-    socket.ev.on('connection.update', async update => {
-      if (socket !== whatsappSocket) return;
-
-      const { connection, lastDisconnect, qr } = update;
+    socket.ev.on('connection.update', async (update) => {
+      const {
+        connection,
+        lastDisconnect,
+        qr
+      } = update;
 
       if (qr) {
-        qrCodeData = qr;
-        whatsappConnected = false;
-        whatsappState = 'waiting_for_scan';
-        logInfo('WHATSAPP_QR', 'New QR code generated. Pairing code can now be requested.');
+        currentQR = qr;
+
+        info(
+          'WHATSAPP_QR',
+          'New WhatsApp QR code generated.'
+        );
       }
 
       if (connection === 'connecting') {
-        whatsappState = 'connecting';
-        logInfo('WHATSAPP_CONNECTING', 'Connecting to WhatsApp.');
+        info(
+          'WHATSAPP_CONNECTION',
+          'Connecting to WhatsApp...'
+        );
       }
 
       if (connection === 'open') {
         whatsappConnected = true;
-        whatsappState = 'connected';
-        qrCodeData = null;
+
+        currentQR = null;
         pairingInProgress = false;
-        logInfo('WHATSAPP_CONNECTED', 'WhatsApp connected successfully.');
+
+        success(
+          'WHATSAPP_CONNECTION',
+          'WhatsApp connected successfully. Bot is online.'
+        );
       }
 
       if (connection === 'close') {
         whatsappConnected = false;
-        whatsappState = 'disconnected';
-        qrCodeData = null;
+        currentQR = null;
         pairingInProgress = false;
 
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        logWarn('WHATSAPP_CLOSED', 'WhatsApp connection closed.', { statusCode });
-        whatsappSocket = null;
-
-        // AUTOMATIC 401 AUTHENTICATION RESET
-        if (statusCode === DisconnectReason.loggedOut) {
-          if (resettingAuth) return;
-          resettingAuth = true;
-          try {
-            logWarn('WHATSAPP_LOGOUT', 'Invalid session detected. Resetting authentication.');
-            const prefix = escapeRegex(AUTH_ID + ':');
-            const result = await authCollection.deleteMany({ _id: { $regex: '^' + prefix } });
-            logInfo('WHATSAPP_AUTH_RESET', 'Old authentication records cleared.', { deletedCount: result.deletedCount });
-            await sleep(2000);
-            resettingAuth = false;
-            await startWhatsApp();
-            return;
-          } catch (err) {
-            logError('WHATSAPP_AUTH_RESET_ERROR', 'Could not reset WhatsApp authentication.', err);
-            resettingAuth = false;
-            return;
-          }
+        if (whatsappSocket === socket) {
+          whatsappSocket = null;
         }
 
-        // AUTOMATIC RECONNECTION
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode;
+
+        warn(
+          'WHATSAPP_CONNECTION',
+          'WhatsApp connection closed.',
+          { statusCode }
+        );
+
+        if (statusCode === DisconnectReason.loggedOut) {
+          error(
+            'WHATSAPP_LOGOUT',
+            'WhatsApp logged out. A new pairing is required.',
+            lastDisconnect?.error
+          );
+
+          return;
+        }
+
         if (!reconnectTimer) {
-          reconnectTimer = setTimeout(async () => {
+          reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
-            if (!whatsappSocket && !startingWhatsApp) {
-              logInfo('WHATSAPP_RECONNECT', 'Attempting to reconnect WhatsApp.');
-              await startWhatsApp();
-            }
+
+            startWhatsApp().catch(err => {
+              error(
+                'WHATSAPP_RECONNECT',
+                'WhatsApp reconnection failed.',
+                err
+              );
+            });
+
           }, 5000);
         }
       }
     });
 
-    // INCOMING MESSAGES
     socket.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
+
       for (const message of messages) {
-        await handleIncomingMessage(socket, message);
+        try {
+          if (!message.message) continue;
+
+          if (message.key.fromMe) continue;
+
+          const chatId = message.key.remoteJid;
+
+          if (!chatId) continue;
+
+          if (
+            chatId === 'status@broadcast' ||
+            chatId.endsWith('@g.us') ||
+            chatId.endsWith('@newsletter')
+          ) {
+            continue;
+          }
+
+          const text = extractMessageText(message.message);
+
+          if (!text) continue;
+
+          info(
+            'WHATSAPP_INCOMING',
+            'New message received.',
+            {
+              chatId,
+              messageLength: text.length
+            }
+          );
+
+          if (!whatsappConnected) {
+            warn(
+              'WHATSAPP_MESSAGE',
+              'Message received while WhatsApp is disconnected.'
+            );
+
+            continue;
+          }
+
+          const reply = await generateReply(chatId, text);
+
+          await socket.sendMessage(chatId, {
+            text: reply
+          });
+
+          success(
+            'WHATSAPP_REPLY',
+            'AI reply sent successfully.',
+            { chatId }
+          );
+
+        } catch (err) {
+          error(
+            'WHATSAPP_MESSAGE',
+            'Could not process incoming message.',
+            err
+          );
+        }
       }
     });
 
-    logInfo('WHATSAPP_SOCKET_CREATED', 'WhatsApp socket created successfully.');
+    success(
+      'WHATSAPP_SOCKET',
+      'WhatsApp socket created and event handlers registered.'
+    );
 
   } catch (err) {
-    whatsappSocket = null;
-    whatsappConnected = false;
-    whatsappState = 'error';
-    logError('WHATSAPP_START_ERROR', 'Could not start WhatsApp.', err);
+    error(
+      'WHATSAPP_START',
+      'WhatsApp startup failed.',
+      err
+    );
+
+    throw err;
+
   } finally {
     startingWhatsApp = false;
   }
 }
 
-// =====================================================
-// HOMEPAGE
-// =====================================================
+// ======================================================
+// HTTP ROUTES
+// ======================================================
 
 app.get('/', (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Manny AI WhatsApp Bot</title>
-<style>
-* { box-sizing: border-box; }
-body { margin: 0; padding: 20px; background: #0b141a; color: white; font-family: Arial, sans-serif; }
-.container { max-width: 500px; margin: 25px auto; }
-.header { text-align: center; margin-bottom: 25px; }
-.logo { font-size: 42px; }
-h1 { color: #25d366; margin: 8px 0; }
-.subtitle { color: #b7c5cc; line-height: 1.5; }
-.card { background: #17252d; border: 1px solid #30434d; border-radius: 15px; padding: 22px; margin-bottom: 20px; }
-.card h2 { font-size: 19px; margin-top: 0; }
-.description { color: #b7c5cc; font-size: 14px; line-height: 1.6; }
-input { width: 100%; padding: 15px; margin: 12px 0; border: 1px solid #45616d; border-radius: 9px; background: #0b141a; color: white; font-size: 17px; outline: none; }
-input:focus { border-color: #25d366; }
-button { width: 100%; padding: 15px; border: none; border-radius: 9px; background: #25d366; color: #062b17; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 8px; }
-button:disabled { opacity: .6; cursor: not-allowed; }
-.pairCode { font-size: 30px; letter-spacing: 5px; text-align: center; color: #25d366; background: #0b141a; padding: 20px; border-radius: 10px; margin: 15px 0; font-weight: bold; }
-#pairResult { text-align: center; margin-top: 15px; overflow-wrap: anywhere; }
-#qrImage { display: none; width: 100%; max-width: 270px; margin: 20px auto; background: white; padding: 10px; border-radius: 10px; }
-#qrStatus { text-align: center; color: #25d366; margin-top: 15px; }
-.statusRow { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #30434d; }
-.statusRow:last-child { border-bottom: none; }
-.statusValue { color: #25d366; font-weight: bold; }
-.instructions { color: #b7c5cc; font-size: 13px; line-height: 1.7; margin-top: 15px; }
-footer { text-align: center; color: #82939c; font-size: 12px; padding: 20px; }
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="header">
-    <div class="logo">🤖</div>
-    <h1>Manny AI WhatsApp Bot</h1>
-    <p class="subtitle">Connect your WhatsApp account to your AI assistant. Choose your preferred linking method below.</p>
-  </div>
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>${config.botName}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+      </head>
 
-  <div class="card">
-    <h2>📱 Link using phone number</h2>
-    <p class="description">Enter the WhatsApp number you want to connect. Include your country code. For Kenya, use 2547XXXXXXXX. Do not include the plus sign.</p>
-    <input type="tel" id="phone" placeholder="2547XXXXXXXX" autocomplete="tel">
-    <button id="pairButton" onclick="generateCode()">Generate Pairing Code</button>
-    <div id="pairResult"></div>
-    <div class="instructions">
-      1. Open WhatsApp on the phone you want to link.<br>
-      2. Go to Linked Devices.<br>
-      3. Select Link a Device.<br>
-      4. Select Link with phone number instead.<br>
-      5. Enter the pairing code displayed above.
-    </div>
-  </div>
+      <body style="font-family:Arial;text-align:center;padding:30px">
 
-  <div class="card">
-    <h2>🔳 Link using QR code</h2>
-    <p class="description">You can also connect by scanning the QR code using WhatsApp on your phone.</p>
-    <div id="qrStatus">Waiting for QR code...</div>
-    <img id="qrImage" alt="WhatsApp QR Code">
-    <div class="instructions">
-      1. Open WhatsApp.<br>
-      2. Go to Linked Devices.<br>
-      3. Select Link a Device.<br>
-      4. Scan the QR code above.
-    </div>
-  </div>
+        <h2>${config.botName}</h2>
 
-  <div class="card">
-    <h2>Connection status</h2>
-    <div class="statusRow"><span>WhatsApp</span><span class="statusValue" id="waStatus">Checking...</span></div>
-    <div class="statusRow"><span>MongoDB</span><span class="statusValue" id="mongoStatus">Checking...</span></div>
-    <div class="statusRow"><span>Gemini AI</span><span class="statusValue" id="geminiStatus">Checking...</span></div>
-  </div>
+        <p>WhatsApp AI Assistant</p>
 
-  <footer>Manny AI WhatsApp Bot</footer>
-</div>
+        <p>WhatsApp: ${whatsappConnected ? 'ONLINE' : 'OFFLINE'}</p>
 
-<script>
-async function generateCode() {
-  const phone = document.getElementById('phone').value.trim();
-  const result = document.getElementById('pairResult');
-  const button = document.getElementById('pairButton');
+        <p>Gemini: ${geminiStatus}</p>
 
-  if (!/^\\d{8,15}$/.test(phone)) {
-    result.textContent = 'Enter a valid phone number with country code.';
-    return;
-  }
+        <p>Active model: ${activeGeminiModel || 'Not selected'}</p>
 
-  button.disabled = true;
-  button.textContent = 'Generating code...';
-  result.textContent = 'Please wait...';
+        <p><a href="/health">Health check</a></p>
 
-  try {
-    const response = await fetch('/request-pairing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: phone })
-    });
+        <p><a href="/status">Bot status</a></p>
 
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Pairing code generation failed.');
+        <p><a href="/qr">WhatsApp QR code</a></p>
 
-    result.innerHTML = '';
-    const heading = document.createElement('p');
-    heading.textContent = 'Your WhatsApp pairing code:';
-    
-    const code = document.createElement('div');
-    code.className = 'pairCode';
-    code.textContent = data.code;
-
-    const copyButton = document.createElement('button');
-    copyButton.textContent = 'Copy Pairing Code';
-    copyButton.onclick = async function() {
-      try {
-        await navigator.clipboard.writeText(data.code);
-        copyButton.textContent = 'Copied successfully!';
-      } catch {
-        copyButton.textContent = 'Please copy the code manually.';
-      }
-    };
-
-    result.appendChild(heading);
-    result.appendChild(code);
-    result.appendChild(copyButton);
-  } catch (error) {
-    result.textContent = error.message;
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Generate Pairing Code';
-  }
-}
-
-async function refreshStatus() {
-  try {
-    const response = await fetch('/status', { cache: 'no-store' });
-    const data = await response.json();
-
-    document.getElementById('waStatus').textContent = data.whatsappConnected ? 'Connected' : data.whatsappState;
-    document.getElementById('mongoStatus').textContent = data.mongoConnected ? 'Connected' : 'Disconnected';
-    document.getElementById('geminiStatus').textContent = data.geminiConfigured ? 'Configured' : 'Missing API Key';
-
-    const qrImage = document.getElementById('qrImage');
-    const qrStatus = document.getElementById('qrStatus');
-
-    if (data.qrReady && !data.whatsappConnected) {
-      qrImage.src = '/qr?t=' + Date.now();
-      qrImage.style.display = 'block';
-      qrStatus.textContent = 'Scan this QR code using WhatsApp.';
-    } else {
-      qrImage.style.display = 'none';
-      qrStatus.textContent = data.whatsappConnected ? 'WhatsApp is already connected.' : 'Waiting for QR code...';
-    }
-  } catch (error) {
-    console.error('Status error:', error);
-  }
-}
-
-refreshStatus();
-setInterval(refreshStatus, 5000);
-</script>
-</body>
-</html>`);
+      </body>
+    </html>
+  `);
 });
 
-// =====================================================
+// ======================================================
 // HEALTH CHECK
-// =====================================================
+// ======================================================
 
 app.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    service: 'Manny AI WhatsApp Bot',
-    whatsappConnected,
-    mongoConnected,
-    geminiConfigured: Boolean(GEMINI_API_KEY),
-    uptime: process.uptime()
+  const ready =
+    Boolean(db) &&
+    whatsappConnected &&
+    geminiStatus === 'CONNECTED';
+
+  res.status(ready ? 200 : 503).json({
+    success: ready,
+
+    bot: config.botName,
+
+    whatsapp: whatsappConnected
+      ? 'CONNECTED'
+      : 'DISCONNECTED',
+
+    gemini: geminiStatus,
+
+    activeGeminiModel,
+
+    mongodb: db
+      ? 'CONNECTED'
+      : 'DISCONNECTED',
+
+    geminiError: geminiLastError
   });
 });
 
-// =====================================================
-// STATUS API
-// =====================================================
+// ======================================================
+// BOT STATUS
+// ======================================================
 
 app.get('/status', (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
   res.json({
-    success: true,
+    bot: config.botName,
+
     whatsappConnected,
-    whatsappState,
-    qrReady: Boolean(qrCodeData),
+
+    geminiStatus,
+
+    geminiModel: config.geminiModel,
+
+    geminiFallbackModel: config.geminiFallbackModel,
+
+    activeGeminiModel,
+
+    geminiLastError,
+
+    mongodbConnected: Boolean(db),
+
     pairingInProgress,
-    mongoConnected,
-    geminiConfigured: Boolean(GEMINI_API_KEY),
-    geminiModel: GEMINI_MODEL,
-    geminiFallbackModel: GEMINI_FALLBACK_MODEL,
-    uptime: process.uptime()
+
+    qrAvailable: Boolean(currentQR)
   });
 });
 
-// =====================================================
-// QR CODE API
-// =====================================================
+// ======================================================
+// WHATSAPP QR CODE
+// ======================================================
 
 app.get('/qr', async (req, res) => {
   try {
-    if (!qrCodeData) {
-      return res.status(404).send('QR code is not available. Wait for a new QR code.');
+    if (whatsappConnected) {
+      return res.send('WhatsApp is already connected.');
     }
-    const image = await QRCode.toBuffer(qrCodeData, { type: 'png', width: 300, margin: 2 });
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(image);
+
+    if (!currentQR) {
+      return res.status(404).send(
+        'QR code is not available yet. Wait for WhatsApp to generate one.'
+      );
+    }
+
+    const image = await QRCode.toDataURL(currentQR);
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>WhatsApp QR Code</title>
+        </head>
+
+        <body style="text-align:center;font-family:Arial;padding:20px">
+
+          <h2>Scan with WhatsApp</h2>
+
+          <img src="${image}" style="width:300px;max-width:90%">
+
+          <p>Open WhatsApp → Linked devices → Link a device.</p>
+
+          <p>Refresh this page if the QR code expires.</p>
+
+        </body>
+      </html>
+    `);
+
   } catch (err) {
-    logError('QR_ERROR', 'Could not generate QR code.', err);
-    res.status(500).send('QR generation failed.');
+    error('QR_ROUTE', 'Could not generate QR code.', err);
+
+    res.status(500).send('Could not generate QR code.');
   }
 });
 
-// =====================================================
-// PHONE NUMBER PAIRING API
-// =====================================================
-
-function normalizePhone(phone) {
-  return String(phone || '').replace(/\D/g, '');
-}
+// ======================================================
+// WHATSAPP PAIRING CODE
+// ======================================================
 
 app.post('/request-pairing', async (req, res) => {
-  if (pairingInProgress) {
-    return res.status(409).json({ success: false, error: 'A pairing request is already in progress. Please wait.' });
-  }
-  if (resettingAuth) {
-    return res.status(503).json({ success: false, error: 'WhatsApp authentication is being reset. Try again shortly.' });
-  }
-
-  const phone = normalizePhone(req.body?.phone || req.body?.number);
-  if (!/^\d{8,15}$/.test(phone)) {
-    return res.status(400).json({ success: false, error: 'Enter a valid phone number with country code. Example: 2547XXXXXXXX.' });
-  }
-
-  if (whatsappConnected) {
-    return res.status(409).json({ success: false, error: 'WhatsApp is already connected.' });
-  }
-
-  if (!whatsappSocket) {
-    return res.status(503).json({ success: false, error: 'WhatsApp socket is not ready. Wait for the QR code to appear and try again.' });
-  }
-
-  if (!qrCodeData) {
-     return res.status(400).json({ success: false, error: 'Please wait for the QR code to appear on the screen, then try requesting the pairing code again.' });
-  }
-
-  pairingInProgress = true;
-
   try {
-    const socket = whatsappSocket;
+    const phone = String(req.body.phone || '')
+      .replace(/\D/g, '');
 
-    logInfo('PAIRING_REQUEST', 'Generating phone number pairing code.');
-    const code = await socket.requestPairingCode(phone);
-    logInfo('PAIRING_CODE_GENERATED', 'WhatsApp pairing code generated successfully.');
+    if (!phone || phone.length < 10 || phone.length > 15) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide a valid phone number including country code.'
+      });
+    }
 
-    res.json({ success: true, phone, code });
+    if (whatsappConnected) {
+      return res.status(400).json({
+        success: false,
+        error: 'WhatsApp is already connected.'
+      });
+    }
+
+    if (!whatsappSocket) {
+      return res.status(503).json({
+        success: false,
+        error: 'WhatsApp socket is not ready. Try again shortly.'
+      });
+    }
+
+    if (pairingInProgress) {
+      return res.status(409).json({
+        success: false,
+        error: 'A pairing request is already in progress.'
+      });
+    }
+
+    pairingInProgress = true;
+
+    info(
+      'WHATSAPP_PAIRING',
+      'Requesting WhatsApp pairing code.'
+    );
+
+    const code = await whatsappSocket.requestPairingCode(phone);
+
+    success(
+      'WHATSAPP_PAIRING',
+      'WhatsApp pairing code generated.'
+    );
+
+    res.json({
+      success: true,
+      pairingCode: code
+    });
 
   } catch (err) {
-    logError('PAIRING_ERROR', 'Could not generate pairing code.', err);
-    res.status(500).json({ success: false, error: err.message || 'Pairing code generation failed.' });
+    error(
+      'WHATSAPP_PAIRING',
+      'Could not generate pairing code.',
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+
   } finally {
     pairingInProgress = false;
   }
 });
 
-// =====================================================
-// SEND WHATSAPP MESSAGE API
-// =====================================================
-
-function normalizeJid(value) {
-  const raw = String(value || '').trim();
-  if (raw.includes('@')) {
-    if (!/^\d{5,20}@(s\.whatsapp\.net|g\.us)$/.test(raw)) throw new Error('Invalid WhatsApp recipient.');
-    return raw;
-  }
-  const phone = normalizePhone(raw);
-  if (!/^\d{8,15}$/.test(phone)) throw new Error('Enter a valid recipient phone number.');
-  return phone + '@s.whatsapp.net';
-}
+// ======================================================
+// SEND WHATSAPP MESSAGE
+// ======================================================
 
 app.post('/send', async (req, res) => {
   try {
     if (!whatsappConnected || !whatsappSocket) {
-      return res.status(503).json({ success: false, error: 'WhatsApp is not connected.' });
+      return res.status(503).json({
+        success: false,
+        error: 'WhatsApp is not connected.'
+      });
     }
 
-    const recipient = normalizeJid(req.body?.to || req.body?.phone || req.body?.number);
-    const message = String(req.body?.message || '').trim();
+    const phone = String(req.body.phone || '')
+      .replace(/\D/g, '');
 
-    if (!message) {
-      return res.status(400).json({ success: false, error: 'Message cannot be empty.' });
+    const message = String(req.body.message || '').trim();
+
+    if (!phone || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Phone number and message are required.'
+      });
     }
 
-    await whatsappSocket.sendMessage(recipient, { text: message });
-    logInfo('MESSAGE_SENT', 'WhatsApp message sent successfully.', { recipient });
+    const jid = `${phone}@s.whatsapp.net`;
 
-    res.json({ success: true, message: 'Message sent successfully.' });
+    await whatsappSocket.sendMessage(jid, {
+      text: message
+    });
+
+    success(
+      'WHATSAPP_SEND',
+      'Message sent successfully.',
+      { jid }
+    );
+
+    res.json({
+      success: true,
+      message: 'Message sent successfully.'
+    });
+
   } catch (err) {
-    logError('SEND_ERROR', 'Could not send WhatsApp message.', err);
-    res.status(500).json({ success: false, error: err.message || 'Message sending failed.' });
+    error(
+      'WHATSAPP_SEND',
+      'Message sending failed.',
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 });
 
-// =====================================================
+// ======================================================
 // START SERVER
-// =====================================================
+// ======================================================
 
-app.listen(PORT, '0.0.0.0', () => {
-  logInfo('SERVER_STARTED', 'Server running on port ' + PORT);
-  logInfo('GEMINI_CONFIGURATION', 'Gemini configuration loaded.', {
-    apiKeyPresent: Boolean(GEMINI_API_KEY),
-    primaryModel: GEMINI_MODEL,
-    fallbackModel: GEMINI_FALLBACK_MODEL
+async function startServer() {
+  info('STARTUP', 'BOT STARTUP BEGIN');
+
+  info('CONFIG', `Bot: ${config.botName}`);
+
+  info('CONFIG', `Gemini primary model: ${config.geminiModel}`);
+
+  info('CONFIG', `Gemini fallback model: ${config.geminiFallbackModel}`);
+
+  info(
+    'CONFIG',
+    'Gemini API key present: ' + Boolean(config.geminiKey)
+  );
+
+  info(
+    'CONFIG',
+    'MongoDB URI present: ' + Boolean(config.mongodbUri)
+  );
+
+  info(
+    'CONFIG',
+    `Gemini timeout: ${config.geminiTimeoutMs}ms`
+  );
+
+  info(
+    'CONFIG',
+    `Gemini retries: ${config.geminiMaxRetries}`
+  );
+
+  await connectMongoDB();
+
+  app.listen(config.port, '0.0.0.0', () => {
+    success('HTTP_SERVER', 'Server running.', {
+      port: config.port
+    });
   });
 
-  connectMongoDB()
-    .then(async () => {
-      await startWhatsApp();
-    })
-    .catch(err => {
-      mongoConnected = false;
-      logError('STARTUP_ERROR', 'Could not initialize MongoDB or WhatsApp.', err);
-    });
+  // Gemini verification runs independently.
+  testGemini().catch(err => {
+    error(
+      'GEMINI_TEST',
+      'Background Gemini test failed.',
+      err
+    );
+  });
+
+  // WhatsApp starts even if Gemini is unavailable.
+  await startWhatsApp();
+
+  success(
+    'STARTUP',
+    'Startup sequence completed.'
+  );
+}
+
+// ======================================================
+// GRACEFUL SHUTDOWN
+// ======================================================
+
+async function shutdown(signal) {
+  warn(
+    'SHUTDOWN',
+    `Received ${signal}. Shutting down...`
+  );
+
+  try {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    if (whatsappSocket) {
+      whatsappSocket.end(undefined);
+      whatsappSocket = null;
+    }
+
+    if (mongoClient) {
+      await mongoClient.close();
+    }
+
+    success('SHUTDOWN', 'Shutdown completed.');
+
+  } catch (err) {
+    error(
+      'SHUTDOWN',
+      'Shutdown error.',
+      err
+    );
+  }
+
+  process.exit(0);
+}
+
+// ======================================================
+// PROCESS ERROR HANDLERS
+// ======================================================
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('unhandledRejection', (reason) => {
+  error(
+    'UNHANDLED_REJECTION',
+    'Unhandled promise rejection.',
+    reason instanceof Error
+      ? reason
+      : new Error(String(reason))
+  );
 });
 
-// =====================================================
-// PROCESS ERROR HANDLING
-// =====================================================
+process.on('uncaughtException', (err) => {
+  error(
+    'UNCAUGHT_EXCEPTION',
+    'Uncaught exception.',
+    err
+  );
 
-process.on('unhandledRejection', reason => {
-  logError('UNHANDLED_REJECTION', 'Unhandled promise rejection.', reason);
+  process.exit(1);
 });
 
-process.on('uncaughtException', err => {
-  logError('UNCAUGHT_EXCEPTION', 'Uncaught application exception.', err);
+// ======================================================
+// RUN
+// ======================================================
+
+startServer().catch(err => {
+  error(
+    'STARTUP_FATAL',
+    'Bot startup failed.',
+    err
+  );
+
+  process.exit(1);
 });
