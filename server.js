@@ -834,6 +834,8 @@ async function connectToWhatsApp() {
 
     // =================================================
     // RECEIVE WHATSAPP MESSAGES
+    // PRIVATE CHATS ONLY
+    // REPLY DIRECTLY TO ORIGINAL MESSAGE
     // =================================================
 
     sock.ev.on('messages.upsert', async event => {
@@ -847,23 +849,47 @@ async function connectToWhatsApp() {
 
       for (const msg of event.messages || []) {
         try {
+          // IGNORE MESSAGES SENT BY THE BOT ITSELF
+
           if (!msg.message || msg.key.fromMe) continue;
 
           const chatId = msg.key.remoteJid;
 
-          if (
-            !chatId ||
-            chatId === 'status@broadcast' ||
-            chatId.endsWith('@newsletter')
-          ) {
+          if (!chatId) {
+            continue;
+          }
+
+          // =================================================
+          // IMPORTANT: BLOCK ALL WHATSAPP GROUP MESSAGES
+          // =================================================
+
+          if (chatId.endsWith('@g.us')) {
             log(
               'INFO',
-              'WHATSAPP_INCOMING',
-              'Ignored status, newsletter or invalid chat message.'
+              'GROUP_FILTER',
+              `Group message ignored: ${maskJid(chatId)}`
             );
 
             continue;
           }
+
+          // IGNORE STATUS, NEWSLETTERS AND BROADCASTS
+
+          if (
+            chatId === 'status@broadcast' ||
+            chatId.endsWith('@newsletter') ||
+            chatId.endsWith('@broadcast')
+          ) {
+            log(
+              'INFO',
+              'WHATSAPP_INCOMING',
+              'Ignored status, newsletter or broadcast message.'
+            );
+
+            continue;
+          }
+
+          // EXTRACT MESSAGE TEXT
 
           const message = msg.message;
 
@@ -886,12 +912,12 @@ async function connectToWhatsApp() {
             continue;
           }
 
-          // Do not log private message contents.
+          // DO NOT LOG PRIVATE MESSAGE CONTENTS
 
           log(
             'SUCCESS',
             'WHATSAPP_INCOMING',
-            `Received text message from ${maskJid(chatId)}. Length: ${userMessage.length}`
+            `Received private text message from ${maskJid(chatId)}. Length: ${userMessage.length}`
           );
 
           // GENERATE AI REPLY
@@ -901,23 +927,31 @@ async function connectToWhatsApp() {
             userMessage.trim()
           );
 
-          // SEND REPLY
+          // =================================================
+          // SEND REPLY DIRECTLY TO THE ORIGINAL MESSAGE
+          // =================================================
 
           if (sock && isConnected) {
             log(
               'INFO',
               'WHATSAPP_SEND',
-              `Sending AI reply to ${maskJid(chatId)}.`
+              `Sending quoted AI reply to ${maskJid(chatId)}.`
             );
 
-            await sock.sendMessage(chatId, {
-              text: reply
-            });
+            await sock.sendMessage(
+              chatId,
+              {
+                text: reply
+              },
+              {
+                quoted: msg
+              }
+            );
 
             log(
               'SUCCESS',
               'WHATSAPP_SEND',
-              `Reply sent successfully to ${maskJid(chatId)}.`
+              `Quoted reply sent successfully to ${maskJid(chatId)}.`
             );
 
           } else {
