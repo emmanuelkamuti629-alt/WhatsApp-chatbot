@@ -40,7 +40,11 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .qr-area img{max-width:230px;width:100%;background:white;padding:10px;border-radius:8px}
 .hidden{display:none}
 .actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
-@media(max-width:600px){body{padding:12px}.card{padding:15px}}
+.code{font-size:25px;font-weight:bold;letter-spacing:3px;color:#4ade80;text-align:center}
+@media(max-width:600px){
+ body{padding:12px}
+ .card{padding:15px}
+}
 </style>
 </head>
 
@@ -50,124 +54,125 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <h1>NONCHALANT_Q</h1>
 <p class="subtitle">WhatsApp AI Bot Control Dashboard</p>
 
-<!-- ADMIN TOKEN -->
+<!-- ADMIN AUTHENTICATION -->
 <div class="card">
-  <h2>Admin Authentication</h2>
-  <p class="muted">Enter the same ADMIN_CONTROL_TOKEN configured in your Render environment variables.</p>
+<h2>Admin Authentication</h2>
+<p class="muted">Enter the exact ADMIN_CONTROL_TOKEN configured in your Render environment variables. If that variable is empty, leave this field blank.</p>
 
-  <label>Admin Token</label>
-  <input type="password" id="adminToken" placeholder="Enter your admin token">
+<label>Admin Token</label>
+<input type="password" id="adminToken" placeholder="Enter your admin token">
 
-  <button class="primary" onclick="saveToken()">SAVE TOKEN</button>
-  <button class="secondary" onclick="clearToken()">CLEAR TOKEN</button>
+<button class="primary" onclick="saveToken()">SAVE TOKEN</button>
+<button class="secondary" onclick="clearToken()">CLEAR TOKEN</button>
 
-  <div id="tokenMessage" class="status">Enter your admin token to access dashboard controls.</div>
+<div id="tokenMessage" class="status">Enter your admin token to access dashboard controls.</div>
 </div>
 
 <!-- SYSTEM STATUS -->
 <div class="card">
-  <h2>System Status</h2>
-  <div id="systemStatus" class="status">Waiting for authentication...</div>
-  <button class="secondary" onclick="loadStatus()">REFRESH STATUS</button>
+<h2>System Status</h2>
+<div id="systemStatus" class="status">Waiting for authentication...</div>
+<button class="secondary" onclick="loadStatus()">REFRESH STATUS</button>
 </div>
 
 <!-- BOT SETTINGS -->
 <div class="card">
-  <h2>Bot Settings</h2>
+<h2>Bot Settings</h2>
 
-  <div class="switch-row">
-    <div>
-      <strong>Main Bot Power</strong>
-      <div class="muted">Turn Manny's automatic replies on or off.</div>
-    </div>
-    <label class="switch">
-      <input type="checkbox" id="botPower" disabled>
-      <span class="slider"></span>
-    </label>
-  </div>
+<div class="switch-row">
+<div>
+<strong>Main Bot Power</strong>
+<div class="muted">Turn Manny's automatic replies on or off.</div>
+</div>
+<label class="switch">
+<input type="checkbox" id="botPower" disabled>
+<span class="slider"></span>
+</label>
+</div>
 
-  <div class="switch-row">
-    <div>
-      <strong>Group Messaging</strong>
-      <div class="muted">Allow or block automatic replies in groups.</div>
-    </div>
-    <label class="switch">
-      <input type="checkbox" id="groupMessaging" disabled>
-      <span class="slider"></span>
-    </label>
-  </div>
+<div class="switch-row">
+<div>
+<strong>Group Messaging</strong>
+<div class="muted">Allow or block automatic replies in groups.</div>
+</div>
+<label class="switch">
+<input type="checkbox" id="groupMessaging" disabled>
+<span class="slider"></span>
+</label>
+</div>
 
-  <div id="settingsMessage" class="status">Settings will appear here.</div>
+<div id="settingsMessage" class="status">Settings will appear here.</div>
 </div>
 
 <!-- LINKED ACCOUNTS -->
 <div class="card">
-  <h2>Linked WhatsApp Accounts</h2>
-  <p class="muted">View each account and its current connection status.</p>
-  <div id="accountsList">Waiting for authentication...</div>
+<h2>Linked WhatsApp Accounts</h2>
+<p class="muted">View your WhatsApp accounts. Select an account to pair it or remove it.</p>
+<div id="accountsList">Waiting for authentication...</div>
 </div>
 
 <!-- ADD ACCOUNT -->
 <div class="card">
-  <h2>Link Another WhatsApp Account</h2>
+<h2>Link Another WhatsApp Account</h2>
 
-  <label>Account Name (Optional)</label>
-  <input type="text" id="accountName" placeholder="e.g. Personal WhatsApp">
+<label>Account Name (Optional)</label>
+<input type="text" id="accountName" placeholder="e.g. Personal WhatsApp">
 
-  <button class="primary" id="createAccountBtn" onclick="createAccount()">LINK NEW ACCOUNT</button>
+<button class="primary" id="createAccountBtn" onclick="createAccount()">LINK NEW ACCOUNT</button>
 
-  <div id="pairingArea" class="hidden">
-    <div id="pairingStatus" class="status">Preparing connection...</div>
+<div id="pairingArea" class="hidden">
 
-    <div class="qr-area">
-      <h3>Scan QR Code</h3>
-      <img id="qrImage" class="hidden" alt="WhatsApp QR Code">
-    </div>
+<div id="pairingStatus" class="status">Preparing connection...</div>
 
-    <label>Phone Number with Country Code</label>
-    <input type="tel" id="pairPhone" placeholder="2547XXXXXXXX">
+<div class="qr-area">
+<h3>Scan QR Code</h3>
+<img id="qrImage" class="hidden" alt="WhatsApp QR Code">
+</div>
 
-    <button class="success" onclick="requestPairingCode()">GET PAIRING CODE</button>
-    <div id="pairCode" class="status">Pairing code will appear here.</div>
-  </div>
+<label>Phone Number with Country Code</label>
+<input type="tel" id="pairPhone" placeholder="2547XXXXXXXX">
+
+<button class="success" id="pairButton" onclick="requestPairingCode()">GET PAIRING CODE</button>
+
+<div id="pairCode" class="status">Your pairing code will appear here.</div>
+
+</div>
 </div>
 
 <!-- TAKEOVER -->
 <div class="card">
-  <h2>Take Over Control</h2>
-  <p class="muted">
-    Release the 10-minute admin takeover early so Manny can reply to a private chat.
-  </p>
+<h2>Take Over Control</h2>
+<p class="muted">Release the 10-minute admin takeover early so Manny can reply to a private chat.</p>
 
-  <label>Select WhatsApp Account</label>
-  <select id="takeoverAccount">
-    <option value="">Select connected account</option>
-  </select>
+<label>Select WhatsApp Account</label>
+<select id="takeoverAccount">
+<option value="">Select connected account</option>
+</select>
 
-  <label>Phone Number</label>
-  <input type="tel" id="takeoverPhone" placeholder="2547XXXXXXXX">
+<label>Phone Number</label>
+<input type="tel" id="takeoverPhone" placeholder="2547XXXXXXXX">
 
-  <button class="success" onclick="releaseTakeover()">ALLOW BOT TO CHAT</button>
-  <div id="takeoverResult" class="status">Takeover status will appear here.</div>
+<button class="success" onclick="releaseTakeover()">ALLOW BOT TO CHAT</button>
+<div id="takeoverResult" class="status">Takeover status will appear here.</div>
 </div>
 
 <!-- SEND MESSAGE -->
 <div class="card">
-  <h2>Send a Message</h2>
+<h2>Send a Message</h2>
 
-  <label>Select WhatsApp Account</label>
-  <select id="sendAccount">
-    <option value="">Select connected account</option>
-  </select>
+<label>Select WhatsApp Account</label>
+<select id="sendAccount">
+<option value="">Select connected account</option>
+</select>
 
-  <label>Recipient Phone Number</label>
-  <input type="tel" id="recipientPhone" placeholder="2547XXXXXXXX">
+<label>Recipient Phone Number</label>
+<input type="tel" id="recipientPhone" placeholder="2547XXXXXXXX">
 
-  <label>Message</label>
-  <textarea id="messageText" rows="4" placeholder="Type your message..."></textarea>
+<label>Message</label>
+<textarea id="messageText" rows="4" placeholder="Type your message..."></textarea>
 
-  <button class="primary" onclick="sendMessage()">SEND MESSAGE</button>
-  <div id="sendResult" class="status">Message status will appear here.</div>
+<button class="primary" onclick="sendMessage()">SEND MESSAGE</button>
+<div id="sendResult" class="status">Message status will appear here.</div>
 </div>
 
 </div>
@@ -176,9 +181,13 @@ button:disabled{opacity:.5;cursor:not-allowed}
 let adminToken = localStorage.getItem("nonchalant_admin_token") || "";
 let accounts = [];
 let pairingAccountId = null;
-let pairingTimer = null;
+let statusTimer = null;
 
 document.getElementById("adminToken").value = adminToken;
+
+// ==================================================
+// API HELPER
+// ==================================================
 
 async function api(url, options = {}) {
   const headers = {
@@ -199,9 +208,10 @@ async function api(url, options = {}) {
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new Error("Invalid admin token. Check your Render ADMIN_CONTROL_TOKEN.");
+      throw new Error("Invalid admin token. Check the ADMIN_CONTROL_TOKEN in Render.");
     }
-    throw new Error(data.error || "Request failed.");
+
+    throw new Error(data.error || "Request failed. HTTP " + response.status);
   }
 
   return data;
@@ -211,16 +221,24 @@ function showMessage(id, message) {
   document.getElementById(id).textContent = message;
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ==================================================
+// TOKEN MANAGEMENT
+// ==================================================
+
 function saveToken() {
   const entered = document.getElementById("adminToken").value.trim();
 
-  if (!entered) {
-    showMessage("tokenMessage", "Please enter your admin token.");
-    return;
-  }
-
   adminToken = entered;
-  localStorage.setItem("nonchalant_admin_token", adminToken);
+
+  if (entered) {
+    localStorage.setItem("nonchalant_admin_token", entered);
+  } else {
+    localStorage.removeItem("nonchalant_admin_token");
+  }
 
   showMessage("tokenMessage", "Token saved. Checking authentication...");
   loadStatus();
@@ -229,6 +247,7 @@ function saveToken() {
 function clearToken() {
   adminToken = "";
   localStorage.removeItem("nonchalant_admin_token");
+
   document.getElementById("adminToken").value = "";
 
   accounts = [];
@@ -240,7 +259,101 @@ function clearToken() {
 
   showMessage("tokenMessage", "Saved token cleared.");
   showMessage("systemStatus", "Enter your admin token to continue.");
+  showMessage("accountsList", "Authentication required.");
 }
+
+// ==================================================
+// ACCOUNT SELECTORS
+// ==================================================
+
+function populateAccountSelectors() {
+  const selectors = [
+    document.getElementById("sendAccount"),
+    document.getElementById("takeoverAccount")
+  ];
+
+  selectors.forEach(select => {
+    const oldValue = select.value;
+
+    select.innerHTML = "";
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select connected account";
+    select.appendChild(placeholder);
+
+    accounts.filter(account => account.connected).forEach(account => {
+      const option = document.createElement("option");
+      option.value = account.id;
+      option.textContent = account.label || account.id;
+      select.appendChild(option);
+    });
+
+    if ([...select.options].some(option => option.value === oldValue)) {
+      select.value = oldValue;
+    }
+  });
+}
+
+// ==================================================
+// RENDER LINKED ACCOUNTS
+// ==================================================
+
+function renderAccounts() {
+  const container = document.getElementById("accountsList");
+  container.innerHTML = "";
+
+  if (!accounts.length) {
+    container.textContent = "No WhatsApp accounts found.";
+    return;
+  }
+
+  accounts.forEach(account => {
+    const div = document.createElement("div");
+    div.className = "account";
+
+    const name = document.createElement("div");
+    name.className = "account-name";
+    name.textContent = account.label || "WhatsApp Account";
+
+    const status = document.createElement("div");
+    status.className = account.connected ? "online" : "offline";
+    status.textContent = account.connected
+      ? "● CONNECTED"
+      : "● " + String(account.state || "DISCONNECTED").toUpperCase();
+
+    const id = document.createElement("div");
+    id.className = "muted";
+    id.textContent = "Account ID: " + account.id;
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const pairButton = document.createElement("button");
+    pairButton.className = "primary";
+    pairButton.textContent = "PAIR THIS ACCOUNT";
+    pairButton.onclick = () => selectAccountForPairing(account.id);
+
+    const removeButton = document.createElement("button");
+    removeButton.className = "danger";
+    removeButton.textContent = "REMOVE ACCOUNT";
+    removeButton.onclick = () => disconnectAccount(account.id);
+
+    actions.appendChild(pairButton);
+    actions.appendChild(removeButton);
+
+    div.appendChild(name);
+    div.appendChild(status);
+    div.appendChild(id);
+    div.appendChild(actions);
+
+    container.appendChild(div);
+  });
+}
+
+// ==================================================
+// STATUS
+// ==================================================
 
 async function loadStatus() {
   if (!adminToken) {
@@ -259,15 +372,24 @@ async function loadStatus() {
     document.getElementById("groupMessaging").disabled = false;
 
     showMessage("tokenMessage", "Admin authentication successful.");
+
     showMessage(
       "systemStatus",
-      "Server: Online | Bot: " + (data.botPower ? "ON" : "OFF") +
-      " | Group Messaging: " + (data.groupMessaging ? "ON" : "OFF")
+      "Server: Online | MongoDB: " +
+      (data.mongoConnected ? "Connected" : "Disconnected") +
+      " | Gemini: " +
+      (data.aiConnected ? "Connected" : "Not connected") +
+      " | Bot: " +
+      (data.botPower ? "ON" : "OFF") +
+      " | Group Messaging: " +
+      (data.groupMessaging ? "ON" : "OFF")
     );
 
     accounts = Array.isArray(data.accounts) ? data.accounts : [];
+
     renderAccounts();
     populateAccountSelectors();
+    updatePairingDisplay();
 
   } catch (error) {
     showMessage("systemStatus", error.message);
@@ -279,79 +401,193 @@ async function loadStatus() {
   }
 }
 
-function renderAccounts() {
-  const container = document.getElementById("accountsList");
-  container.innerHTML = "";
+// ==================================================
+// PAIRING DISPLAY
+// ==================================================
 
-  if (!accounts.length) {
-    container.textContent = "No WhatsApp accounts found.";
+function updatePairingDisplay() {
+  if (!pairingAccountId) return;
+
+  const account = accounts.find(item => item.id === pairingAccountId);
+
+  if (!account) return;
+
+  if (account.connected) {
+    showMessage("pairingStatus", "WhatsApp account connected successfully.");
+
+    document.getElementById("qrImage").classList.add("hidden");
+
+    showMessage("pairCode", "Your WhatsApp account is connected.");
+
     return;
   }
 
-  accounts.forEach(account => {
-    const div = document.createElement("div");
-    div.className = "account";
+  showMessage(
+    "pairingStatus",
+    "Account status: " + String(account.state || "starting").toUpperCase()
+  );
 
-    const name = document.createElement("div");
-    name.className = "account-name";
-    name.textContent = account.name || "WhatsApp Account";
+  if (account.qr) {
+    const qr = document.getElementById("qrImage");
+    qr.src = account.qr;
+    qr.classList.remove("hidden");
+  } else {
+    document.getElementById("qrImage").classList.add("hidden");
+  }
 
-    const status = document.createElement("div");
-    status.className = account.connected ? "online" : "offline";
-    status.textContent = account.connected ? "● CONNECTED" : "● DISCONNECTED";
+  if (account.pairingCode) {
+    showMessage("pairCode", "PAIRING CODE: " + account.pairingCode);
+  }
+}
 
-    const accountId = document.createElement("div");
-    accountId.className = "muted";
-    accountId.textContent = "Account ID: " + (account.id || "Unknown");
+// ==================================================
+// SELECT ACCOUNT FOR PAIRING
+// ==================================================
 
-    const action = document.createElement("button");
+function selectAccountForPairing(id) {
+  pairingAccountId = id;
 
-    if (account.connected) {
-      action.className = "danger";
-      action.textContent = "DISCONNECT";
-      action.onclick = () => disconnectAccount(account.id);
-    } else {
-      action.className = "success";
-      action.textContent = "CONNECT";
-      action.onclick = () => connectAccount(account.id);
-    }
+  document.getElementById("pairingArea").classList.remove("hidden");
 
-    div.appendChild(name);
-    div.appendChild(status);
-    div.appendChild(accountId);
-    div.appendChild(action);
+  showMessage("pairingStatus", "Selected account. Checking WhatsApp connection...");
+  showMessage("pairCode", "Enter your phone number and request a pairing code.");
 
-    container.appendChild(div);
+  updatePairingDisplay();
+
+  document.getElementById("pairingArea").scrollIntoView({
+    behavior: "smooth"
   });
 }
 
-function populateAccountSelectors() {
-  const selectors = [
-    document.getElementById("sendAccount"),
-    document.getElementById("takeoverAccount")
-  ];
+// ==================================================
+// CREATE ACCOUNT
+// ==================================================
 
-  selectors.forEach(select => {
-    const oldValue = select.value;
-    select.innerHTML = "";
+async function createAccount() {
+  const button = document.getElementById("createAccountBtn");
+  button.disabled = true;
 
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Select connected account";
-    select.appendChild(placeholder);
+  try {
+    const label = document.getElementById("accountName").value.trim();
 
-    accounts.filter(a => a.connected).forEach(account => {
-      const option = document.createElement("option");
-      option.value = account.id;
-      option.textContent = account.name || account.id;
-      select.appendChild(option);
+    showMessage("systemStatus", "Creating WhatsApp account...");
+
+    const data = await api("/api/accounts", {
+      method: "POST",
+      body: JSON.stringify({ label })
     });
 
-    if ([...select.options].some(o => o.value === oldValue)) {
-      select.value = oldValue;
+    pairingAccountId = data.account?.id;
+
+    if (!pairingAccountId) {
+      throw new Error("Server did not return the new account ID.");
     }
-  });
+
+    document.getElementById("pairingArea").classList.remove("hidden");
+
+    showMessage(
+      "pairingStatus",
+      "Account created. Waiting for WhatsApp connection..."
+    );
+
+    showMessage("pairCode", "Enter your phone number to request a pairing code.");
+
+    await loadStatus();
+
+    document.getElementById("pairingArea").scrollIntoView({
+      behavior: "smooth"
+    });
+
+  } catch (error) {
+    showMessage("pairingStatus", error.message);
+    document.getElementById("pairingArea").classList.remove("hidden");
+  } finally {
+    button.disabled = false;
+  }
 }
+
+// ==================================================
+// REQUEST PAIRING CODE
+// ==================================================
+
+async function requestPairingCode() {
+  if (!pairingAccountId) {
+    showMessage("pairCode", "Select or create an account first.");
+    return;
+  }
+
+  const phone = document.getElementById("pairPhone").value.replace(/\D/g, "");
+
+  if (!/^\d{10,15}$/.test(phone)) {
+    showMessage("pairCode", "Enter a valid phone number with country code, e.g. 2547XXXXXXXX.");
+    return;
+  }
+
+  const button = document.getElementById("pairButton");
+  button.disabled = true;
+
+  try {
+    showMessage("pairCode", "Connecting to WhatsApp and requesting your code...");
+
+    let result = null;
+    let lastError = null;
+
+    // Retry briefly if the WhatsApp socket is still starting.
+    for (let attempt = 1; attempt <= 15; attempt++) {
+      try {
+        result = await api(
+          "/api/accounts/" + encodeURIComponent(pairingAccountId) + "/pair",
+          {
+            method: "POST",
+            body: JSON.stringify({ phone })
+          }
+        );
+
+        break;
+
+      } catch (error) {
+        lastError = error;
+
+        const retryable =
+          /still starting|not ready|connection closed|timed out|connection is not open/i.test(error.message);
+
+        if (!retryable || attempt === 15) {
+          throw error;
+        }
+
+        showMessage(
+          "pairCode",
+          "WhatsApp is preparing the connection. Retrying... (" + attempt + "/15)"
+        );
+
+        await sleep(1000);
+      }
+    }
+
+    if (!result) {
+      throw lastError || new Error("Pairing code could not be generated.");
+    }
+
+    if (result.code) {
+      showMessage("pairCode", "PAIRING CODE: " + result.code);
+    } else if (result.pairingCode) {
+      showMessage("pairCode", "PAIRING CODE: " + result.pairingCode);
+    } else {
+      showMessage("pairCode", "The server did not return a pairing code. Please try again.");
+    }
+
+    await loadStatus();
+
+  } catch (error) {
+    showMessage("pairCode", error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ==================================================
+// BOT SETTINGS
+// ==================================================
 
 async function updateSetting(setting, enabled) {
   try {
@@ -370,149 +606,31 @@ async function updateSetting(setting, enabled) {
     );
 
     await loadStatus();
+
   } catch (error) {
     showMessage("settingsMessage", error.message);
     await loadStatus();
   }
 }
 
-document.getElementById("botPower").addEventListener("change", e => {
-  updateSetting("botPower", e.target.checked);
+document.getElementById("botPower").addEventListener("change", event => {
+  updateSetting("botPower", event.target.checked);
 });
 
-document.getElementById("groupMessaging").addEventListener("change", e => {
-  updateSetting("groupMessaging", e.target.checked);
+document.getElementById("groupMessaging").addEventListener("change", event => {
+  updateSetting("groupMessaging", event.target.checked);
 });
 
-async function createAccount() {
-  const button = document.getElementById("createAccountBtn");
-  button.disabled = true;
-
-  try {
-    const name = document.getElementById("accountName").value.trim();
-
-    const data = await api("/api/accounts", {
-      method: "POST",
-      body: JSON.stringify({ name })
-    });
-
-    pairingAccountId = data.account?.id || data.id;
-
-    if (!pairingAccountId) {
-      throw new Error("Server did not return the new account ID.");
-    }
-
-    document.getElementById("pairingArea").classList.remove("hidden");
-    showMessage("pairingStatus", "Account created. Loading QR code...");
-
-    await loadStatus();
-    await refreshPairing();
-
-    if (pairingTimer) clearInterval(pairingTimer);
-    pairingTimer = setInterval(refreshPairing, 3000);
-
-  } catch (error) {
-    showMessage("pairingStatus", error.message);
-    document.getElementById("pairingArea").classList.remove("hidden");
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function connectAccount(id) {
-  pairingAccountId = id;
-  document.getElementById("pairingArea").classList.remove("hidden");
-
-  showMessage("pairingStatus", "Starting connection for selected account...");
-
-  try {
-    await refreshPairing();
-
-    if (pairingTimer) clearInterval(pairingTimer);
-    pairingTimer = setInterval(refreshPairing, 3000);
-
-    document.getElementById("pairingArea").scrollIntoView({
-      behavior: "smooth"
-    });
-  } catch (error) {
-    showMessage("pairingStatus", error.message);
-  }
-}
-
-async function refreshPairing() {
-  if (!pairingAccountId) return;
-
-  try {
-    const data = await api(
-      "/api/accounts/" + encodeURIComponent(pairingAccountId) + "/pair"
-    );
-
-    if (data.qr) {
-      const qr = document.getElementById("qrImage");
-      qr.src = data.qr.startsWith("data:")
-        ? data.qr
-        : "data:image/png;base64," + data.qr;
-      qr.classList.remove("hidden");
-    }
-
-    if (data.pairingCode) {
-      showMessage("pairCode", "Pairing Code: " + data.pairingCode);
-    }
-
-    if (data.connected) {
-      showMessage("pairingStatus", "WhatsApp account connected successfully.");
-
-      if (pairingTimer) {
-        clearInterval(pairingTimer);
-        pairingTimer = null;
-      }
-
-      await loadStatus();
-    }
-  } catch (error) {
-    showMessage("pairingStatus", error.message);
-  }
-}
-
-async function requestPairingCode() {
-  if (!pairingAccountId) {
-    showMessage("pairCode", "Select or create an account first.");
-    return;
-  }
-
-  const phone = document.getElementById("pairPhone").value.replace(/\D/g, "");
-
-  if (!/^\d{10,15}$/.test(phone)) {
-    showMessage("pairCode", "Enter a valid phone number with country code.");
-    return;
-  }
-
-  try {
-    showMessage("pairCode", "Requesting pairing code...");
-
-    const data = await api(
-      "/api/accounts/" + encodeURIComponent(pairingAccountId) + "/pair",
-      {
-        method: "POST",
-        body: JSON.stringify({ phone })
-      }
-    );
-
-    showMessage(
-      "pairCode",
-      data.pairingCode
-        ? "Pairing Code: " + data.pairingCode
-        : "Pairing code requested. Check again shortly."
-    );
-  } catch (error) {
-    showMessage("pairCode", error.message);
-  }
-}
+// ==================================================
+// REMOVE ACCOUNT
+// ==================================================
 
 async function disconnectAccount(id) {
   if (!confirm(
-    "This server's DELETE endpoint removes the account and its saved authentication. Continue?"
-  )) return;
+    "This will disconnect and REMOVE the account, including its saved WhatsApp authentication. You will need to pair it again. Continue?"
+  )) {
+    return;
+  }
 
   try {
     await api("/api/accounts/" + encodeURIComponent(id), {
@@ -521,18 +639,21 @@ async function disconnectAccount(id) {
 
     if (pairingAccountId === id) {
       pairingAccountId = null;
-      if (pairingTimer) clearInterval(pairingTimer);
-      pairingTimer = null;
       document.getElementById("pairingArea").classList.add("hidden");
     }
 
     showMessage("systemStatus", "Account disconnected and removed.");
+
     await loadStatus();
 
   } catch (error) {
     showMessage("systemStatus", error.message);
   }
 }
+
+// ==================================================
+// RELEASE TAKEOVER
+// ==================================================
 
 async function releaseTakeover() {
   const accountId = document.getElementById("takeoverAccount").value;
@@ -560,10 +681,15 @@ async function releaseTakeover() {
       "takeoverResult",
       data.message || "Takeover released. Manny can now reply."
     );
+
   } catch (error) {
     showMessage("takeoverResult", error.message);
   }
 }
+
+// ==================================================
+// SEND MANUAL MESSAGE
+// ==================================================
 
 async function sendMessage() {
   const accountId = document.getElementById("sendAccount").value;
@@ -590,16 +716,25 @@ async function sendMessage() {
 
     const data = await api("/api/send", {
       method: "POST",
-      body: JSON.stringify({ accountId, phone, message })
+      body: JSON.stringify({
+        accountId,
+        to: phone,
+        message
+      })
     });
 
     showMessage("sendResult", data.message || "Message sent successfully.");
+
     document.getElementById("messageText").value = "";
 
   } catch (error) {
     showMessage("sendResult", error.message);
   }
 }
+
+// ==================================================
+// INITIAL LOAD AND AUTOMATIC REFRESH
+// ==================================================
 
 if (adminToken) {
   loadStatus();
@@ -608,10 +743,14 @@ if (adminToken) {
   showMessage("accountsList", "Authentication required.");
 }
 
-setInterval(() => {
-  if (adminToken) loadStatus();
-}, 10000);
-</script>
+if (statusTimer) clearInterval(statusTimer);
 
+statusTimer = setInterval(() => {
+  if (adminToken) {
+    loadStatus();
+  }
+}, 5000);
+
+</script>
 </body>
 </html>
