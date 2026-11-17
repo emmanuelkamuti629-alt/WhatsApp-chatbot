@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const OpenAI = require('openai');
 const NodeCache = require('node-cache');
 
@@ -21,12 +22,17 @@ const config = {
       'You are a helpful, accurate assistant. Answer clearly and concisely.',
     maxHistory: parseInt(process.env.MAX_HISTORY_MESSAGES || '10', 10),
   },
-  server: { port: parseInt(process.env.PORT || '3000', 10) },
+  server: {
+    port: parseInt(process.env.PORT || '3000', 10),
+    host: '0.0.0.0',
+  },
   whatsapp: {
+    // On Render, mount a Persistent Disk at /var/data and set SESSION_PATH=/var/data/session
     sessionPath: process.env.SESSION_PATH || './.wwebjs_auth',
     cachePath: process.env.CACHE_PATH || './.wwebjs_cache',
   },
   logLevel: process.env.LOG_LEVEL || 'info',
+  publicUrl: process.env.RENDER_EXTERNAL_URL || '',
 };
 
 // ─── Logger ────────────────────────────────────────────────────────────────
@@ -49,6 +55,10 @@ if (!config.openai.apiKey || !config.openai.apiKey.startsWith('sk-')) {
 // ─── OpenAI + History ──────────────────────────────────────────────────────
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 const historyCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
+
+// Store latest QR so we can render it on the web page (Render has no visible terminal)
+let latestQR = null;
+let latestQRDataUrl = null;
 
 function buildSystemPrompt() {
   return `${config.bot.personality}
@@ -113,6 +123,8 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: config.whatsapp.sessionPath }),
   puppeteer: {
     headless: true,
+    // PUPPETEER_EXECUTABLE_PATH is set automatically on Render if you install chrome
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -121,6 +133,7 @@ const client = new Client({
       '--no-first-run',
       '--no-zygote',
       '--disable-gpu',
+      '--single-process', // helps on low-memory containers
     ],
   },
 });
@@ -180,39 +193,92 @@ async function handleMessage(msg) {
   }
 }
 
-client.on('qr', (qr) => {
+client.on('qr', async (qr) => {
+  latestQR = qr;
+  // Print ASCII QR to logs (Render logs panel)
   log.info('📱 Scan this QR code with WhatsApp:');
   qrcode.generate(qr, { small: true });
+  // Also generate a PNG data URL for the web page
+  try {
+    latestQRDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
+    log.info('QR also available at /qr');
+  } catch (e) {
+    log.warn('Failed to generate QR data URL:', e.message);
+  }
 });
-client.on('authenticated', () => log.info('✅ Authenticated successfully.'));
+
+client.on('authenticated', () => {
+  log.info('✅ Authenticated successfully.');
+  latestQR = null;
+  latestQRDataUrl = null;
+});
+
 client.on('auth_failure', (m) => log.error('❌ Auth failure:', m));
 client.on('loading_screen', (p) => log.debug(`Loading... ${p}%`));
-client.on('ready', () => log.info(`🚀 ${config.bot.name} is online and ready!`));
+
+client.on('ready', () => {
+  log.info(`🚀 ${config.bot.name} is online and ready!`);
+  latestQR = null;
+  latestQRDataUrl = null;
+});
+
 client.on('disconnected', (reason) => {
   log.warn('🔌 Client disconnected:', reason);
   log.info('Reinitializing in 5s...');
-  setTimeout(() => client.initialize(), 5000);
+  setTimeout(() => {
+    client.initialize().catch((e) => log.error('Reinitialize failed:', e));
+  }, 5000);
 });
+
 client.on('message', handleMessage);
 
-client.initialize();
+client.initialize().catch((e) => log.error('Client init failed:', e));
 
 // ─── Express Server ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
+// Root → serve control panel
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
+// Health check (also used to keep Render free tier awake via external pings)
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     bot: config.bot.name,
     whatsappReady: !!client.info,
     uptime: process.uptime(),
+    qrPending: !!latestQR,
   });
 });
 
+// QR code page (scan from browser if terminal logs aren't visible)
+app.get('/qr', (req, res) => {
+  if (client.info) {
+    return res.send('<h2>✅ Already authenticated. No QR needed.</h2>');
+  }
+  if (!latestQRDataUrl) {
+    return res.send(
+      '<h2>⏳ QR not ready yet. Refresh in a few seconds...</h2>' +
+      '<meta http-equiv="refresh" content="3">'
+    );
+  }
+  res.send(`<!DOCTYPE html>
+<html><head><title>WhatsApp QR</title>
+<style>body{font-family:sans-serif;text-align:center;padding:40px;background:#f0f2f5}
+img{border:8px solid #fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.15)}
+p{color:#667781}</style></head>
+<body>
+<h2>📱 Scan with WhatsApp</h2>
+<p>Linked Devices → Link a Device</p>
+<img src="${latestQRDataUrl}" alt="QR Code" />
+<p>Page auto-refreshes every 20s</p>
+<meta http-equiv="refresh" content="20">
+</body></html>`);
+});
+
+// Send a WhatsApp message via HTTP
 app.post('/send', async (req, res) => {
   const { to, message } = req.body;
   if (!to || !message) {
@@ -229,17 +295,23 @@ app.post('/send', async (req, res) => {
   }
 });
 
-app.listen(config.server.port, () => {
-  log.info(`🌐 Web UI at http://localhost:${config.server.port}`);
+// Bind to 0.0.0.0 so Render can detect the port
+const server = app.listen(config.server.port, config.server.host, () => {
+  log.info(`🌐 Web UI listening on http://${config.server.host}:${config.server.port}`);
+  if (config.publicUrl) log.info(`🌍 Public URL: ${config.publicUrl}`);
 });
 
 // ─── Graceful Shutdown ─────────────────────────────────────────────────────
-async function shutdown() {
-  log.info('🛑 Shutting down gracefully...');
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.info(`🛑 Received ${signal}, shutting down gracefully...`);
   try { await client.destroy(); } catch (_) {}
-  process.exit(0);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10000); // force exit if hung
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('unhandledRejection', (err) => log.error('Unhandled rejection:', err));
 process.on('uncaughtException', (err) => log.error('Uncaught exception:', err));
