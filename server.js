@@ -95,8 +95,6 @@ const app = express();
 
 app.use(express.json({ limit: '1mb' }));
 
-// index.html is in the project root.
-
 const mongoClient = new MongoClient(config.mongoUri || '', {
   serverSelectionTimeoutMS: 10000,
   connectTimeoutMS: 10000,
@@ -700,7 +698,6 @@ async function processIncoming(account, msg) {
     msg.pushName || ''
   );
 
-  // Messages sent manually by the linked phone.
   if (msg.key.fromMe) {
     if (!isGroup) {
       recordAdminActivity(account.id, jid);
@@ -741,7 +738,6 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
-  // Check switches again before sending.
   if (!botPower) return;
 
   if (isGroup && !groupMessaging) return;
@@ -835,6 +831,9 @@ async function connectAccount(accountId) {
             width: 400,
             margin: 2
           });
+
+          account.state = 'qr_ready';
+
         } catch (error) {
           log('ERROR', 'QR generation failed', error);
         }
@@ -920,6 +919,39 @@ async function connectAccount(accountId) {
 
     scheduleReconnect(account, 10000);
   }
+}
+
+// =====================================================
+// WAIT FOR WHATSAPP SOCKET BEFORE PAIRING
+// =====================================================
+
+async function waitForAccountSocket(account, timeout = 20000) {
+  const started = Date.now();
+
+  while (Date.now() - started < timeout) {
+    if (account.connected) {
+      throw new Error('Account is already connected.');
+    }
+
+    if (account.sock) {
+      // Allow the socket time to initialize before requesting a code.
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      if (account.sock) {
+        return account.sock;
+      }
+    }
+
+    if (!account.connecting && !account.reconnectTimer) {
+      await connectAccount(account.id);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+
+  throw new Error(
+    'WhatsApp connection is taking too long. Please try again.'
+  );
 }
 
 // =====================================================
@@ -1134,7 +1166,6 @@ app.post('/api/takeover/release', adminAuth, async (req, res) => {
 
     const wasActive = adminActivity.has(key);
 
-    // Remove the ten-minute takeover restriction for this chat.
     adminActivity.delete(key);
 
     log('SUCCESS', 'Admin takeover manually released', {
@@ -1195,6 +1226,51 @@ app.post('/api/accounts', adminAuth, async (req, res) => {
 });
 
 // =====================================================
+// API: RECONNECT EXISTING ACCOUNT
+// =====================================================
+
+app.post('/api/accounts/:id/connect', adminAuth, async (req, res) => {
+  try {
+    const account = accounts.get(req.params.id);
+
+    if (!account) {
+      return res.status(404).json({
+        error: 'Account not found.'
+      });
+    }
+
+    if (account.connected) {
+      return res.json({
+        success: true,
+        message: 'Account is already connected.'
+      });
+    }
+
+    if (account.reconnectTimer) {
+      clearTimeout(account.reconnectTimer);
+      account.reconnectTimer = null;
+    }
+
+    if (!account.connecting) {
+      await connectAccount(account.id);
+    }
+
+    return res.json({
+      success: true,
+      message: 'WhatsApp connection started.',
+      account: publicAccount(account)
+    });
+
+  } catch (error) {
+    log('ERROR', 'Account reconnect failed', error);
+
+    return res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// =====================================================
 // API: PAIR ACCOUNT USING PHONE NUMBER
 // =====================================================
 
@@ -1214,12 +1290,6 @@ app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
       });
     }
 
-    if (!account.sock) {
-      return res.status(503).json({
-        error: 'WhatsApp is still starting. Try again shortly.'
-      });
-    }
-
     const phone = String(
       req.body?.phone || ''
     ).replace(/\D/g, '');
@@ -1230,20 +1300,34 @@ app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
       });
     }
 
-    const code = await account.sock.requestPairingCode(phone);
+    const socket = await waitForAccountSocket(account);
 
-    account.pairingCode = code.match(/.{1,4}/g).join('-');
+    if (account.connected || !account.sock) {
+      return res.status(409).json({
+        error: 'Account connection changed. Refresh and try again.'
+      });
+    }
 
-    res.json({
+    const code = await socket.requestPairingCode(phone);
+
+    account.pairingCode = code;
+
+    log('SUCCESS', 'WhatsApp pairing code generated', {
+      account: account.id,
+      phone: maskJid(`${phone}@s.whatsapp.net`)
+    });
+
+    return res.json({
       success: true,
-      code: account.pairingCode
+      code,
+      message: 'Pairing code generated successfully.'
     });
 
   } catch (error) {
     log('ERROR', 'Pairing code request failed', error);
 
-    res.status(500).json({
-      error: error.message
+    return res.status(500).json({
+      error: error.message || 'Could not generate pairing code.'
     });
   }
 });
