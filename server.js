@@ -95,7 +95,10 @@ Keep WhatsApp responses brief and natural.
 const app = express();
 
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// IMPORTANT:
+// index.html is in the project root.
+// No public folder or express.static is required.
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
   serverSelectionTimeoutMS: 10000,
@@ -933,7 +936,6 @@ async function disconnectAccount(accountId) {
     throw new Error('Account not found.');
   }
 
-  // Invalidate pending connection callbacks.
   account.generation++;
 
   if (account.reconnectTimer) {
@@ -956,13 +958,10 @@ async function disconnectAccount(accountId) {
     }
   }
 
-  // Delete authentication credentials so this account
-  // will require fresh pairing next time.
   await authCollection.deleteMany({
     accountId
   });
 
-  // Remove chat directory and history for this account.
   await chatsCollection.deleteMany({
     accountId
   });
@@ -1053,7 +1052,6 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
       enabled
     });
 
-    // Announce to all known chats across connected accounts.
     announceAllAccounts(enabled).catch(error => {
       log('ERROR', 'Announcement process failed', error);
     });
@@ -1295,11 +1293,12 @@ app.get('/health', (req, res) => {
 
 // =====================================================
 // MAIN PAGE
+// index.html is directly beside server.js
 // =====================================================
 
 app.get('/', (req, res) => {
   res.sendFile(
-    path.join(__dirname, 'public', 'index.html')
+    path.join(__dirname, 'index.html')
   );
 });
 
