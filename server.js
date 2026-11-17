@@ -30,6 +30,7 @@ const config = {
     host: '0.0.0.0',
   },
   whatsapp: {
+    // On Render free tier, this must be a relative path
     sessionPath: process.env.SESSION_PATH || './.wwebjs_auth',
   },
   logLevel: process.env.LOG_LEVEL || 'info',
@@ -104,8 +105,9 @@ async function generateReply(chatId, userMessage) {
   }
 }
 
-// ─── Chrome Path Resolution (CRITICAL FOR RENDER) ──────────────────────────
-// This explicitly points Puppeteer to the Chrome installed during the build phase
+// ─── Chrome Path Resolution ────────────────────────────────────────────────
+// We removed the broken executablePath override. Puppeteer will now search
+// the default cache directory automatically.
 const puppeteerConfig = {
   headless: true,
   args: [
@@ -119,13 +121,6 @@ const puppeteerConfig = {
     '--single-process',
   ],
 };
-
-if (process.env.PUPPETEER_CACHE_DIR) {
-  // Render puts the cache in a specific folder, we point to it directly
-  const cacheDir = process.env.PUPPETEER_CACHE_DIR.replace('./', '');
-  puppeteerConfig.executablePath = path.join(__dirname, cacheDir, 'chrome', 'linux-127.0.6533.88', 'chrome-linux64', 'chrome');
-  log.info(`🔍 Looking for Chrome at: ${puppeteerConfig.executablePath}`);
-}
 
 // ─── WhatsApp Client ───────────────────────────────────────────────────────
 const client = new Client({
