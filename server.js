@@ -582,8 +582,19 @@ async function generateReply(accountId, chatId, userMessage) {
 }
 
 // =====================================================
-// MESSAGE SENDING
+// MESSAGE SENDING — AUTOMATIC ITALIC .bot PREFIX
 // =====================================================
+
+function formatBotMessage(message) {
+  const content = String(message || '').trim();
+
+  // Avoid adding the prefix twice.
+  if (/^_\.bot_\s*/i.test(content)) {
+    return content;
+  }
+
+  return `_.bot_ ${content}`;
+}
 
 async function sendText(account, jid, text, quoted) {
   if (!account.sock || !account.connected) {
@@ -594,7 +605,7 @@ async function sendText(account, jid, text, quoted) {
 
   return account.sock.sendMessage(
     jid,
-    { text },
+    { text: formatBotMessage(text) },
     options
   );
 }
@@ -669,8 +680,6 @@ function groupMessagingAnnouncementText() {
   ].join('\n');
 }
 
-// Fetch every group the connected WhatsApp account participates in.
-// Combine these with groups already saved in MongoDB.
 async function getAllAccountGroups(account) {
   if (!account.sock || !account.connected) {
     return [];
@@ -678,7 +687,6 @@ async function getAllAccountGroups(account) {
 
   const groupJids = new Set();
 
-  // Get groups directly from WhatsApp.
   try {
     const participatingGroups =
       await account.sock.groupFetchAllParticipating();
@@ -701,7 +709,6 @@ async function getAllAccountGroups(account) {
     });
   }
 
-  // Include previously saved group chats as a fallback.
   try {
     const savedChats = await getKnownChats(account.id);
 
@@ -721,7 +728,6 @@ async function getAllAccountGroups(account) {
   return [...groupJids];
 }
 
-// Send notification to every group belonging to one account.
 async function announceGroupMessagingAccount(account) {
   if (!account.connected || !account.sock) {
     log('WARN', 'Skipping disconnected account', account.id);
@@ -744,7 +750,6 @@ async function announceGroupMessagingAccount(account) {
   });
 
   for (const groupJid of groups) {
-    // Stop if group messaging is switched off during announcements.
     if (!groupMessaging) break;
 
     if (!account.connected || !account.sock) break;
@@ -793,7 +798,6 @@ async function announceGroupMessagingAccount(account) {
   };
 }
 
-// Send notifications across all linked accounts.
 async function announceAllGroups() {
   if (announcementRunning) {
     log('WARN', 'Group announcement already running');
@@ -1288,7 +1292,6 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
-    // Remember previous state to avoid duplicate notifications.
     const wasEnabled = groupMessaging;
 
     if (wasEnabled === enabled) {
@@ -1309,7 +1312,6 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       enabled
     });
 
-    // Send the announcement ONLY when switching ON.
     if (enabled && !wasEnabled) {
       announceAllGroups().catch(error => {
         log('ERROR', 'Group enable announcement failed', error);
@@ -1735,7 +1737,6 @@ async function startBot() {
       log('WARN', 'GEMINI_API_KEY is missing');
     }
 
-    // Restore every previously linked account.
     for (const account of accounts.values()) {
       connectAccount(account.id);
     }
