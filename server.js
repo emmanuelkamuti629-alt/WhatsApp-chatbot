@@ -132,7 +132,10 @@ let shuttingDown = false;
 
 let botPower = true;
 let groupMessaging = false;
-let announcementRunning = false;
+
+// Separate announcement locks.
+let accountAnnouncementRunning = false;
+let groupAnnouncementRunning = false;
 
 const accounts = new Map();
 const adminActivity = new Map();
@@ -344,7 +347,7 @@ async function mongoAuthState(accountId) {
 // ACCOUNT MANAGEMENT
 // =====================================================
 
-function createAccountRecord(id, label) {
+function createAccountRecord(id, label, manualTakeover = false) {
   if (accounts.has(id)) return accounts.get(id);
 
   const account = {
@@ -358,6 +361,9 @@ function createAccountRecord(id, label) {
 
     qr: null,
     pairingCode: null,
+
+    // Account-wide private-chat manual takeover.
+    manualTakeover: manualTakeover === true,
 
     reconnectTimer: null,
     reconnectAttempts: 0,
@@ -375,6 +381,7 @@ async function saveAccountRecord(account) {
     {
       $set: {
         label: account.label,
+        manualTakeover: account.manualTakeover === true,
         updatedAt: new Date()
       },
       $setOnInsert: {
@@ -394,6 +401,7 @@ async function loadAccounts() {
       {
         $set: {
           label: 'Main WhatsApp',
+          manualTakeover: false,
           createdAt: new Date()
         }
       },
@@ -404,7 +412,11 @@ async function loadAccounts() {
   const all = await accountsCollection.find({}).toArray();
 
   for (const item of all) {
-    createAccountRecord(item._id, item.label);
+    createAccountRecord(
+      item._id,
+      item.label,
+      item.manualTakeover === true
+    );
   }
 }
 
@@ -582,13 +594,12 @@ async function generateReply(accountId, chatId, userMessage) {
 }
 
 // =====================================================
-// MESSAGE SENDING — STANDARD NONCHALANT_Q FORMAT
+// MESSAGE SENDING — GROUP-ONLY NONCHALANT_Q FORMAT
 // =====================================================
 
 function formatBotMessage(message) {
   const content = String(message || '').trim();
 
-  // Avoid adding the prefix twice.
   if (/^⚠️\.bot\*/i.test(content)) {
     return content;
   }
@@ -601,11 +612,18 @@ async function sendText(account, jid, text, quoted) {
     throw new Error(`Account ${account.id} is disconnected`);
   }
 
+  const isGroup = String(jid || '').endsWith('@g.us');
+
+  // Groups get the prefix. Private chats stay normal.
+  const outgoingText = isGroup
+    ? formatBotMessage(text)
+    : String(text || '').trim();
+
   const options = quoted ? { quoted } : {};
 
   return account.sock.sendMessage(
     jid,
-    { text: formatBotMessage(text) },
+    { text: outgoingText },
     options
   );
 }
@@ -635,10 +653,14 @@ async function announceAccount(account, enabled) {
   });
 
   for (const chat of chats) {
+    if (!account.connected || !account.sock) break;
+
     try {
       await sendText(account, chat.jid, notice);
 
-      await new Promise(resolve => setTimeout(resolve, 350));
+      await new Promise(resolve =>
+        setTimeout(resolve, 350)
+      );
 
     } catch (error) {
       log('WARN', 'Announcement failed', {
@@ -651,9 +673,12 @@ async function announceAccount(account, enabled) {
 }
 
 async function announceAllAccounts(enabled) {
-  if (announcementRunning) return;
+  if (accountAnnouncementRunning) {
+    log('WARN', 'Account announcement already running');
+    return;
+  }
 
-  announcementRunning = true;
+  accountAnnouncementRunning = true;
 
   try {
     for (const account of accounts.values()) {
@@ -662,7 +687,7 @@ async function announceAllAccounts(enabled) {
       }
     }
   } finally {
-    announcementRunning = false;
+    accountAnnouncementRunning = false;
   }
 }
 
@@ -731,6 +756,7 @@ async function getAllAccountGroups(account) {
 async function announceGroupMessagingAccount(account) {
   if (!account.connected || !account.sock) {
     log('WARN', 'Skipping disconnected account', account.id);
+
     return {
       account: account.id,
       sent: 0,
@@ -799,12 +825,12 @@ async function announceGroupMessagingAccount(account) {
 }
 
 async function announceAllGroups() {
-  if (announcementRunning) {
+  if (groupAnnouncementRunning) {
     log('WARN', 'Group announcement already running');
     return;
   }
 
-  announcementRunning = true;
+  groupAnnouncementRunning = true;
 
   const results = [];
 
@@ -826,7 +852,7 @@ async function announceAllGroups() {
     log('ERROR', 'Group announcement process failed', error);
 
   } finally {
-    announcementRunning = false;
+    groupAnnouncementRunning = false;
   }
 }
 
@@ -883,14 +909,27 @@ async function processIncoming(account, msg) {
     return;
   }
 
+  // Main switch controls all automatic replies.
   if (!botPower) return;
 
+  // Group switch controls group replies independently.
   if (isGroup && !groupMessaging) return;
+
+  // Account-wide takeover blocks private chats only.
+  if (!isGroup && account.manualTakeover) {
+    log('INFO', 'Account manual takeover active; private reply paused', {
+      account: account.id,
+      chat: maskJid(jid)
+    });
+
+    return;
+  }
 
   const userMessage = extractText(msg.message);
 
   if (!userMessage) return;
 
+  // Retain the existing ten-minute private-chat takeover.
   if (!isGroup && adminIsActive(account.id, jid)) {
     log('INFO', 'Admin still active; reply postponed', {
       account: account.id,
@@ -915,9 +954,13 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
+  // Recheck switches after AI generation in case the admin
+  // changed a setting while the AI request was running.
   if (!botPower) return;
 
   if (isGroup && !groupMessaging) return;
+
+  if (!isGroup && account.manualTakeover) return;
 
   if (!isGroup && adminIsActive(account.id, jid)) return;
 
@@ -1200,7 +1243,8 @@ function publicAccount(account) {
     connecting: account.connecting,
     state: account.state,
     qr: account.qr,
-    pairingCode: account.pairingCode
+    pairingCode: account.pairingCode,
+    manualTakeover: account.manualTakeover === true
   };
 }
 
@@ -1304,6 +1348,7 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
+    // This changes the live setting immediately.
     groupMessaging = enabled;
 
     await saveSettings();
@@ -1313,6 +1358,8 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     });
 
     if (enabled && !wasEnabled) {
+      // Announcement runs in the background.
+      // New incoming group messages can be answered immediately.
       announceAllGroups().catch(error => {
         log('ERROR', 'Group enable announcement failed', error);
       });
@@ -1321,8 +1368,8 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     res.json({
       success: true,
       message: enabled
-        ? 'Group messaging enabled. Announcements are being sent to all connected account groups.'
-        : 'Group messaging disabled.',
+        ? 'Group messaging is ON. Manny can now reply to new group messages on connected accounts, provided Main Bot Power is ON. Group announcements are starting.'
+        : 'Group messaging is OFF. Manny will stop replying in groups.',
       status: getDashboardStatus()
     });
 
@@ -1336,7 +1383,62 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
 });
 
 // =====================================================
-// API: MANUALLY RELEASE ADMIN TAKEOVER
+// API: ACCOUNT-WIDE MANUAL TAKEOVER
+// =====================================================
+
+app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
+  try {
+    const account = accounts.get(req.params.id);
+
+    if (!account) {
+      return res.status(404).json({
+        error: 'Account not found.'
+      });
+    }
+
+    if (!account.connected) {
+      return res.status(503).json({
+        error: 'Selected WhatsApp account is not connected.'
+      });
+    }
+
+    const enabled = req.body?.enabled;
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({
+        error: 'enabled must be true or false.'
+      });
+    }
+
+    account.manualTakeover = enabled;
+
+    await saveAccountRecord(account);
+
+    log('SUCCESS', 'Account-wide manual takeover changed', {
+      account: account.id,
+      enabled
+    });
+
+    return res.json({
+      success: true,
+      message: enabled
+        ? `Manual takeover ON for ${account.label}. Manny has paused private-chat replies on this account. Group replies are unaffected.`
+        : `Manual takeover OFF for ${account.label}. Manny can now resume private-chat replies immediately.`,
+      account: publicAccount(account)
+    });
+
+  } catch (error) {
+    log('ERROR', 'Manual takeover update failed', error);
+
+    return res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// =====================================================
+// API: MANUALLY RELEASE OLD PER-CHAT TAKEOVER
+// Kept for backward compatibility.
 // =====================================================
 
 app.post('/api/takeover/release', adminAuth, async (req, res) => {
@@ -1374,8 +1476,8 @@ app.post('/api/takeover/release', adminAuth, async (req, res) => {
     return res.json({
       success: true,
       message: wasActive
-        ? 'Takeover released. Manny can now reply to this chat.'
-        : 'No active takeover restriction was found. Manny is allowed to reply.'
+        ? 'Takeover released. Manny can now reply to this chat unless account-wide takeover is ON.'
+        : 'No active per-chat takeover restriction was found.'
     });
 
   } catch (error) {
@@ -1401,7 +1503,8 @@ app.post('/api/accounts', adminAuth, async (req, res) => {
 
     const account = createAccountRecord(
       id,
-      label || `WhatsApp ${accounts.size + 1}`
+      label || `WhatsApp ${accounts.size + 1}`,
+      false
     );
 
     await saveAccountRecord(account);
