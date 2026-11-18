@@ -46,8 +46,9 @@ const config = {
 
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
 
-  announcementDelay: 500,
+  announcementDelay: 350,
 
+  // Three minutes after the admin's last private message.
   privateChatCooldown: 3 * 60 * 1000,
 
   personality: `
@@ -136,7 +137,6 @@ let botPower = true;
 let groupMessaging = false;
 
 let accountAnnouncementRunning = false;
-let groupAnnouncementRunning = false;
 
 const accounts = new Map();
 const startedAt = new Date();
@@ -188,6 +188,17 @@ function maskJid(jid) {
 
 function validAccountId(id) {
   return /^[a-zA-Z0-9_-]{1,40}$/.test(String(id || ''));
+}
+
+function isGroupJid(jid) {
+  return String(jid || '').endsWith('@g.us');
+}
+
+function isPrivateJid(jid) {
+  return (
+    String(jid || '').endsWith('@s.whatsapp.net') ||
+    String(jid || '').endsWith('@lid')
+  );
 }
 
 // =====================================================
@@ -477,22 +488,7 @@ function getPrivateAliases(msg) {
     candidates
       .filter(Boolean)
       .map(value => String(value).trim())
-      .filter(value =>
-        value.endsWith('@s.whatsapp.net') ||
-        value.endsWith('@lid')
-      )
-  )];
-}
-
-function getPrivateJidAliases(jid, jidAlt) {
-  return [...new Set(
-    [jid, jidAlt]
-      .filter(Boolean)
-      .map(value => String(value).trim())
-      .filter(value =>
-        value.endsWith('@s.whatsapp.net') ||
-        value.endsWith('@lid')
-      )
+      .filter(isPrivateJid)
   )];
 }
 
@@ -505,10 +501,7 @@ async function markAdminActivity(accountId, aliases) {
     (Array.isArray(aliases) ? aliases : [aliases])
       .filter(Boolean)
       .map(String)
-      .filter(jid =>
-        jid.endsWith('@s.whatsapp.net') ||
-        jid.endsWith('@lid')
-      )
+      .filter(isPrivateJid)
   )];
 
   if (!validAliases.length) return;
@@ -556,6 +549,7 @@ async function isPrivateChatCoolingDown(accountId, aliases) {
     (Array.isArray(aliases) ? aliases : [aliases])
       .filter(Boolean)
       .map(String)
+      .filter(isPrivateJid)
   )];
 
   if (!validAliases.length) return false;
@@ -743,7 +737,7 @@ async function sendText(account, jid, text, quoted) {
     throw new Error(`Account ${account.id} is disconnected`);
   }
 
-  const isGroup = String(jid || '').endsWith('@g.us');
+  const isGroup = isGroupJid(jid);
 
   const outgoingText = isGroup
     ? formatBotMessage(text)
@@ -785,10 +779,8 @@ async function sendText(account, jid, text, quoted) {
 }
 
 // =====================================================
-// SHORT ON / OFF ANNOUNCEMENTS
+// SHORT NOTIFICATIONS
 // =====================================================
-
-// The ONLY announcement text sent when bot power changes.
 
 function announcementText(enabled) {
   return enabled
@@ -796,24 +788,43 @@ function announcementText(enabled) {
     : '⚠️.bot*\nOff';
 }
 
+// =====================================================
+// PRIVATE-ONLY BOT POWER ANNOUNCEMENTS
+// =====================================================
+
+// IMPORTANT:
+// This function deliberately excludes every group.
+// It only sends status notifications to private chats.
+
 async function announceAccount(account, enabled) {
   if (!account.connected || !account.sock) return;
 
   const chats = await getKnownChats(account.id);
+
+  const privateChats = chats.filter(chat =>
+    isPrivateJid(chat.jid) &&
+    !isGroupJid(chat.jid)
+  );
+
   const notice = announcementText(enabled);
 
-  for (const chat of chats) {
+  for (const chat of privateChats) {
     if (!account.connected || !account.sock) break;
+
+    // Final safety check: never send a status notice to a group.
+    if (!isPrivateJid(chat.jid) || isGroupJid(chat.jid)) {
+      continue;
+    }
 
     try {
       await sendText(account, chat.jid, notice);
 
       await new Promise(resolve =>
-        setTimeout(resolve, 350)
+        setTimeout(resolve, config.announcementDelay)
       );
 
     } catch (error) {
-      log('WARN', 'Announcement failed', {
+      log('WARN', 'Private notification failed', {
         account: account.id,
         chat: maskJid(chat.jid),
         error: error.message
@@ -835,125 +846,6 @@ async function announceAllAccounts(enabled) {
     }
   } finally {
     accountAnnouncementRunning = false;
-  }
-}
-
-// =====================================================
-// GROUP ANNOUNCEMENTS
-// =====================================================
-
-// Same short message for both group ON and OFF.
-
-function groupMessagingAnnouncementText(enabled) {
-  return enabled
-    ? '⚠️.bot*\nEnabled'
-    : '⚠️.bot*\nOff';
-}
-
-async function getAllAccountGroups(account) {
-  if (!account.sock || !account.connected) return [];
-
-  const groupJids = new Set();
-
-  try {
-    const participatingGroups =
-      await account.sock.groupFetchAllParticipating();
-
-    for (const jid of Object.keys(participatingGroups || {})) {
-      if (jid.endsWith('@g.us')) groupJids.add(jid);
-    }
-  } catch (error) {
-    log('WARN', 'Could not fetch participating groups', error);
-  }
-
-  try {
-    const savedChats = await getKnownChats(account.id);
-
-    for (const chat of savedChats) {
-      if (chat.jid && chat.jid.endsWith('@g.us')) {
-        groupJids.add(chat.jid);
-      }
-    }
-  } catch (error) {
-    log('WARN', 'Could not fetch saved groups', error);
-  }
-
-  return [...groupJids];
-}
-
-async function announceGroupMessagingAccount(account, enabled) {
-  if (!account.connected || !account.sock) {
-    return {
-      account: account.id,
-      sent: 0,
-      failed: 0
-    };
-  }
-
-  const groups = await getAllAccountGroups(account);
-  const notice = groupMessagingAnnouncementText(enabled);
-
-  let sent = 0;
-  let failed = 0;
-
-  for (const groupJid of groups) {
-    if (!account.connected || !account.sock) break;
-
-    try {
-      await sendText(account, groupJid, notice);
-      sent++;
-    } catch (error) {
-      failed++;
-
-      log('WARN', 'Group notification failed', {
-        account: account.id,
-        group: maskJid(groupJid),
-        error: error.message
-      });
-    }
-
-    await new Promise(resolve =>
-      setTimeout(resolve, config.announcementDelay)
-    );
-  }
-
-  return {
-    account: account.id,
-    totalGroups: groups.length,
-    sent,
-    failed
-  };
-}
-
-// IMPORTANT:
-// This function now sends notifications for BOTH ON and OFF.
-
-async function announceAllGroups(enabled) {
-  if (groupAnnouncementRunning) return;
-
-  groupAnnouncementRunning = true;
-
-  try {
-    const results = [];
-
-    for (const account of accounts.values()) {
-      if (account.connected) {
-        results.push(
-          await announceGroupMessagingAccount(account, enabled)
-        );
-      }
-    }
-
-    log('SUCCESS', 'Group notifications processed', {
-      enabled,
-      results
-    });
-
-  } catch (error) {
-    log('ERROR', 'Group notification process failed', error);
-
-  } finally {
-    groupAnnouncementRunning = false;
   }
 }
 
@@ -994,7 +886,7 @@ async function processIncoming(account, msg) {
     jid.endsWith('@broadcast')
   ) return;
 
-  const isGroup = jid.endsWith('@g.us');
+  const isGroup = isGroupJid(jid);
 
   await rememberChat(
     account.id,
@@ -1453,8 +1345,10 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
 
     log('SUCCESS', 'Bot power changed', { enabled });
 
+    // Notifications go to private chats only.
+    // announceAccount explicitly excludes all groups.
     announceAllAccounts(enabled).catch(error => {
-      log('ERROR', 'Announcement process failed', error);
+      log('ERROR', 'Private notification process failed', error);
     });
 
     res.json({
@@ -1488,9 +1382,7 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
-    const wasEnabled = groupMessaging;
-
-    if (wasEnabled === enabled) {
+    if (groupMessaging === enabled) {
       return res.json({
         success: true,
         message: enabled
@@ -1506,16 +1398,15 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
 
     log('SUCCESS', 'Group messaging changed', { enabled });
 
-    // Send short notification for BOTH ON and OFF.
-    announceAllGroups(enabled).catch(error => {
-      log('ERROR', 'Group notification failed', error);
-    });
+    // IMPORTANT:
+    // No WhatsApp notification or announcement is sent
+    // when group messaging is enabled or disabled.
 
     res.json({
       success: true,
       message: enabled
-        ? 'Group messaging is ON.'
-        : 'Group messaging is OFF.',
+        ? 'Group messaging enabled.'
+        : 'Group messaging disabled.',
       status: getDashboardStatus()
     });
 
