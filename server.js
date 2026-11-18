@@ -47,6 +47,8 @@ const config = {
 
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
 
+  announcementDelay: 500,
+
   personality: `
 You are Manny. Your name is ALWAYS Manny.
 
@@ -654,6 +656,177 @@ async function announceAllAccounts(enabled) {
 }
 
 // =====================================================
+// GROUP MESSAGING ENABLE ANNOUNCEMENT
+// =====================================================
+
+function groupMessagingAnnouncementText() {
+  return [
+    '⚠️⚠️⚠️ NONCHALANT_Q',
+    '',
+    '🤖 NONCHALANT_Q group messaging bot enabled!',
+    '',
+    'A personal assistant robot, admin will be back soon. 😊'
+  ].join('\n');
+}
+
+// Fetch every group the connected WhatsApp account participates in.
+// Combine these with groups already saved in MongoDB.
+async function getAllAccountGroups(account) {
+  if (!account.sock || !account.connected) {
+    return [];
+  }
+
+  const groupJids = new Set();
+
+  // Get groups directly from WhatsApp.
+  try {
+    const participatingGroups =
+      await account.sock.groupFetchAllParticipating();
+
+    for (const jid of Object.keys(participatingGroups || {})) {
+      if (jid.endsWith('@g.us')) {
+        groupJids.add(jid);
+      }
+    }
+
+    log('INFO', 'WhatsApp participating groups fetched', {
+      account: account.id,
+      count: groupJids.size
+    });
+
+  } catch (error) {
+    log('WARN', 'Could not fetch participating groups', {
+      account: account.id,
+      error: error.message
+    });
+  }
+
+  // Include previously saved group chats as a fallback.
+  try {
+    const savedChats = await getKnownChats(account.id);
+
+    for (const chat of savedChats) {
+      if (chat.jid && chat.jid.endsWith('@g.us')) {
+        groupJids.add(chat.jid);
+      }
+    }
+
+  } catch (error) {
+    log('WARN', 'Could not fetch saved groups', {
+      account: account.id,
+      error: error.message
+    });
+  }
+
+  return [...groupJids];
+}
+
+// Send notification to every group belonging to one account.
+async function announceGroupMessagingAccount(account) {
+  if (!account.connected || !account.sock) {
+    log('WARN', 'Skipping disconnected account', account.id);
+    return {
+      account: account.id,
+      sent: 0,
+      failed: 0
+    };
+  }
+
+  const groups = await getAllAccountGroups(account);
+  const notice = groupMessagingAnnouncementText();
+
+  let sent = 0;
+  let failed = 0;
+
+  log('INFO', 'Starting group messaging announcement', {
+    account: account.id,
+    totalGroups: groups.length
+  });
+
+  for (const groupJid of groups) {
+    // Stop if group messaging is switched off during announcements.
+    if (!groupMessaging) break;
+
+    if (!account.connected || !account.sock) break;
+
+    try {
+      await sendText(
+        account,
+        groupJid,
+        notice
+      );
+
+      sent++;
+
+      log('SUCCESS', 'Group enable notification sent', {
+        account: account.id,
+        group: maskJid(groupJid)
+      });
+
+    } catch (error) {
+      failed++;
+
+      log('WARN', 'Group notification failed', {
+        account: account.id,
+        group: maskJid(groupJid),
+        error: error.message
+      });
+    }
+
+    await new Promise(resolve =>
+      setTimeout(resolve, config.announcementDelay)
+    );
+  }
+
+  log('INFO', 'Group announcement completed', {
+    account: account.id,
+    totalGroups: groups.length,
+    sent,
+    failed
+  });
+
+  return {
+    account: account.id,
+    totalGroups: groups.length,
+    sent,
+    failed
+  };
+}
+
+// Send notifications across all linked accounts.
+async function announceAllGroups() {
+  if (announcementRunning) {
+    log('WARN', 'Group announcement already running');
+    return;
+  }
+
+  announcementRunning = true;
+
+  const results = [];
+
+  try {
+    for (const account of accounts.values()) {
+      if (!groupMessaging) break;
+
+      if (account.connected) {
+        const result =
+          await announceGroupMessagingAccount(account);
+
+        results.push(result);
+      }
+    }
+
+    log('SUCCESS', 'All group announcements processed', results);
+
+  } catch (error) {
+    log('ERROR', 'Group announcement process failed', error);
+
+  } finally {
+    announcementRunning = false;
+  }
+}
+
+// =====================================================
 // MESSAGE EXTRACTION
 // =====================================================
 
@@ -934,7 +1107,6 @@ async function waitForAccountSocket(account, timeout = 20000) {
     }
 
     if (account.sock) {
-      // Allow the socket time to initialize before requesting a code.
       await new Promise(resolve => setTimeout(resolve, 1500));
 
       if (account.sock) {
@@ -1116,14 +1288,38 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
+    // Remember previous state to avoid duplicate notifications.
+    const wasEnabled = groupMessaging;
+
+    if (wasEnabled === enabled) {
+      return res.json({
+        success: true,
+        message: enabled
+          ? 'Group messaging is already enabled.'
+          : 'Group messaging is already disabled.',
+        status: getDashboardStatus()
+      });
+    }
+
     groupMessaging = enabled;
 
     await saveSettings();
 
+    log('SUCCESS', 'Group messaging changed', {
+      enabled
+    });
+
+    // Send the announcement ONLY when switching ON.
+    if (enabled && !wasEnabled) {
+      announceAllGroups().catch(error => {
+        log('ERROR', 'Group enable announcement failed', error);
+      });
+    }
+
     res.json({
       success: true,
       message: enabled
-        ? 'Group messaging enabled.'
+        ? 'Group messaging enabled. Announcements are being sent to all connected account groups.'
         : 'Group messaging disabled.',
       status: getDashboardStatus()
     });
@@ -1427,7 +1623,6 @@ app.get('/health', (req, res) => {
 
 // =====================================================
 // MAIN PAGE
-// index.html is directly beside server.js
 // =====================================================
 
 app.get('/', (req, res) => {
