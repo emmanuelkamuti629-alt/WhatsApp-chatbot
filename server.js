@@ -582,18 +582,18 @@ async function generateReply(accountId, chatId, userMessage) {
 }
 
 // =====================================================
-// MESSAGE SENDING — AUTOMATIC ITALIC .bot PREFIX
+// MESSAGE SENDING — STANDARD NONCHALANT_Q FORMAT
 // =====================================================
 
 function formatBotMessage(message) {
   const content = String(message || '').trim();
 
   // Avoid adding the prefix twice.
-  if (/^_\.bot_\s*/i.test(content)) {
+  if (/^⚠️\.bot\*/i.test(content)) {
     return content;
   }
 
-  return `_.bot_ ${content}`;
+  return `⚠️.bot*\n${content}`;
 }
 
 async function sendText(account, jid, text, quoted) {
