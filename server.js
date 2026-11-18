@@ -1,4 +1,3 @@
-JavaScript
 
 require('dotenv').config();
 
@@ -33,8 +32,6 @@ const config = {
     'https://generativelanguage.googleapis.com/v1beta/openai/',
 
   adminToken: process.env.ADMIN_CONTROL_TOKEN || '',
-
-  takeoverDelay: 10 * 60 * 1000,
 
   maxHistory: Math.max(
     1,
@@ -139,7 +136,6 @@ let accountAnnouncementRunning = false;
 let groupAnnouncementRunning = false;
 
 const accounts = new Map();
-const adminActivity = new Map();
 
 const startedAt = new Date();
 
@@ -363,7 +359,7 @@ function createAccountRecord(id, label, manualTakeover = false) {
     qr: null,
     pairingCode: null,
 
-    // Restored from MongoDB when accounts load.
+    // Account-wide private-chat manual takeover.
     manualTakeover: manualTakeover === true,
 
     reconnectTimer: null,
@@ -376,7 +372,6 @@ function createAccountRecord(id, label, manualTakeover = false) {
   return account;
 }
 
-// Save account settings to MongoDB.
 async function saveAccountRecord(account) {
   if (!accountsCollection) {
     throw new Error('MongoDB account collection is not ready.');
@@ -398,7 +393,6 @@ async function saveAccountRecord(account) {
   );
 }
 
-// Restore account settings from MongoDB.
 async function loadAccounts() {
   const saved = await accountsCollection.find({}).toArray();
 
@@ -467,51 +461,6 @@ async function getKnownChats(accountId) {
   return chatsCollection.find({
     accountId
   }).toArray();
-}
-
-// =====================================================
-// ADMIN ACTIVITY / TEN-MINUTE TAKEOVER
-// =====================================================
-
-function activityKey(accountId, jid) {
-  return `${accountId}:${jid}`;
-}
-
-function recordAdminActivity(accountId, jid) {
-  if (!jid || jid.endsWith('@g.us')) return;
-
-  adminActivity.set(
-    activityKey(accountId, jid),
-    Date.now()
-  );
-
-  log('INFO', 'Admin activity recorded', {
-    accountId,
-    chat: maskJid(jid)
-  });
-}
-
-function adminIsActive(accountId, jid) {
-  const last = adminActivity.get(
-    activityKey(accountId, jid)
-  );
-
-  if (!last) return false;
-
-  return Date.now() - last < config.takeoverDelay;
-}
-
-function remainingTakeoverTime(accountId, jid) {
-  const last = adminActivity.get(
-    activityKey(accountId, jid)
-  );
-
-  if (!last) return 0;
-
-  return Math.max(
-    0,
-    config.takeoverDelay - (Date.now() - last)
-  );
 }
 
 // =====================================================
@@ -917,11 +866,9 @@ async function processIncoming(account, msg) {
     msg.pushName || ''
   );
 
+  // Ignore messages sent by the connected WhatsApp account.
+  // There is no longer any 10-minute admin activity restriction.
   if (msg.key.fromMe) {
-    if (!isGroup) {
-      recordAdminActivity(account.id, jid);
-    }
-
     return;
   }
 
@@ -945,19 +892,6 @@ async function processIncoming(account, msg) {
 
   if (!userMessage) return;
 
-  // Retain the existing ten-minute private-chat takeover.
-  if (!isGroup && adminIsActive(account.id, jid)) {
-    log('INFO', 'Admin still active; reply postponed', {
-      account: account.id,
-      chat: maskJid(jid),
-      remainingSeconds: Math.ceil(
-        remainingTakeoverTime(account.id, jid) / 1000
-      )
-    });
-
-    return;
-  }
-
   log('INFO', 'Incoming message', {
     account: account.id,
     chat: maskJid(jid),
@@ -970,14 +904,13 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
-  // Recheck switches after AI generation.
+  // Recheck switches after AI generation in case settings
+  // changed while the AI request was running.
   if (!botPower) return;
 
   if (isGroup && !groupMessaging) return;
 
   if (!isGroup && account.manualTakeover) return;
-
-  if (!isGroup && adminIsActive(account.id, jid)) return;
 
   if (account.connected) {
     await sendText(account, jid, reply, msg);
@@ -1236,12 +1169,6 @@ async function disconnectAccount(accountId) {
     _id: accountId
   });
 
-  for (const key of adminActivity.keys()) {
-    if (key.startsWith(`${accountId}:`)) {
-      adminActivity.delete(key);
-    }
-  }
-
   accounts.delete(accountId);
 
   log('SUCCESS', 'Account disconnected and removed', accountId);
@@ -1433,8 +1360,7 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
       });
     }
 
-    // Persist the requested setting in MongoDB first.
-    // Only update in-memory state after MongoDB confirms success.
+    // Save to MongoDB before updating live state.
     await accountsCollection.updateOne(
       { _id: account.id },
       {
@@ -1450,7 +1376,6 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
       { upsert: true }
     );
 
-    // Update the live account after successful persistence.
     account.manualTakeover = enabled;
 
     log('SUCCESS', 'Account-wide manual takeover saved to MongoDB', {
@@ -1473,58 +1398,6 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
     return res.status(500).json({
       error: 'Could not save Manual Takeover setting. Please try again.',
       details: error.message
-    });
-  }
-});
-
-// =====================================================
-// API: MANUALLY RELEASE OLD PER-CHAT TAKEOVER
-// =====================================================
-
-app.post('/api/takeover/release', adminAuth, async (req, res) => {
-  try {
-    const { accountId, phone } = req.body || {};
-
-    const account = accounts.get(String(accountId || ''));
-
-    if (!account || !account.connected) {
-      return res.status(503).json({
-        error: 'Selected WhatsApp account is not connected.'
-      });
-    }
-
-    const number = String(phone || '').replace(/\D/g, '');
-
-    if (!/^\d{10,15}$/.test(number)) {
-      return res.status(400).json({
-        error: 'Enter a valid phone number with country code.'
-      });
-    }
-
-    const jid = `${number}@s.whatsapp.net`;
-    const key = activityKey(account.id, jid);
-
-    const wasActive = adminActivity.has(key);
-
-    adminActivity.delete(key);
-
-    log('SUCCESS', 'Admin takeover manually released', {
-      account: account.id,
-      chat: maskJid(jid)
-    });
-
-    return res.json({
-      success: true,
-      message: wasActive
-        ? 'Takeover released. Manny can now reply to this chat unless account-wide takeover is ON.'
-        : 'No active per-chat takeover restriction was found.'
-    });
-
-  } catch (error) {
-    log('ERROR', 'Manual takeover release failed', error);
-
-    return res.status(500).json({
-      error: error.message
     });
   }
 });
