@@ -1,3 +1,4 @@
+HTML
 
 <!DOCTYPE html>
 <html lang="en">
@@ -139,21 +140,28 @@ button:disabled{opacity:.5;cursor:not-allowed}
 </div>
 </div>
 
-<!-- TAKEOVER -->
+<!-- MANUAL TAKEOVER -->
 <div class="card">
-<h2>Take Over Control</h2>
-<p class="muted">Release the 10-minute admin takeover early so Manny can reply to a private chat.</p>
+<h2>Manual Takeover</h2>
+<p class="muted">Turn ON to pause Manny's automatic replies to private chats on the selected WhatsApp account. Turn OFF to let Manny reply again immediately. Group replies are controlled separately.</p>
 
-<label>Select WhatsApp Account</label>
+<label>Select Connected WhatsApp Account</label>
 <select id="takeoverAccount">
 <option value="">Select connected account</option>
 </select>
 
-<label>Phone Number</label>
-<input type="tel" id="takeoverPhone" placeholder="2547XXXXXXXX">
+<div class="switch-row">
+<div>
+<strong>Admin Manual Takeover</strong>
+<div class="muted" id="takeoverStateText">Select a connected account.</div>
+</div>
+<label class="switch">
+<input type="checkbox" id="takeoverToggle" disabled>
+<span class="slider"></span>
+</label>
+</div>
 
-<button class="success" onclick="releaseTakeover()">ALLOW BOT TO CHAT</button>
-<div id="takeoverResult" class="status">Takeover status will appear here.</div>
+<div id="takeoverResult" class="status">Select a connected account to control takeover.</div>
 </div>
 
 <!-- SEND MESSAGE -->
@@ -257,6 +265,11 @@ function clearToken() {
   document.getElementById("botPower").disabled = true;
   document.getElementById("groupMessaging").disabled = true;
 
+  document.getElementById("takeoverToggle").checked = false;
+  document.getElementById("takeoverToggle").disabled = true;
+  showMessage("takeoverStateText", "Select a connected account.");
+  showMessage("takeoverResult", "Select a connected account to control takeover.");
+
   showMessage("tokenMessage", "Saved token cleared.");
   showMessage("systemStatus", "Enter your admin token to continue.");
   showMessage("accountsList", "Authentication required.");
@@ -293,6 +306,8 @@ function populateAccountSelectors() {
       select.value = oldValue;
     }
   });
+
+  updateTakeoverDisplay();
 }
 
 // ==================================================
@@ -352,6 +367,34 @@ function renderAccounts() {
 }
 
 // ==================================================
+// MANUAL TAKEOVER DISPLAY
+// ==================================================
+
+function updateTakeoverDisplay() {
+  const select = document.getElementById("takeoverAccount");
+  const toggle = document.getElementById("takeoverToggle");
+  const text = document.getElementById("takeoverStateText");
+
+  const account = accounts.find(item =>
+    item.id === select.value && item.connected
+  );
+
+  if (!account) {
+    toggle.checked = false;
+    toggle.disabled = true;
+    text.textContent = "Select a connected account.";
+    return;
+  }
+
+  toggle.checked = Boolean(account.manualTakeover);
+  toggle.disabled = false;
+
+  text.textContent = account.manualTakeover
+    ? "ON — Manny is paused for private chats on this account."
+    : "OFF — Manny is replying to private chats on this account.";
+}
+
+// ==================================================
 // STATUS
 // ==================================================
 
@@ -390,14 +433,17 @@ async function loadStatus() {
     renderAccounts();
     populateAccountSelectors();
     updatePairingDisplay();
+    updateTakeoverDisplay();
 
   } catch (error) {
     showMessage("systemStatus", error.message);
     showMessage("accountsList", "Unable to load accounts: " + error.message);
+
     showMessage("tokenMessage", "Authentication failed. Check your token.");
 
     document.getElementById("botPower").disabled = true;
     document.getElementById("groupMessaging").disabled = true;
+    document.getElementById("takeoverToggle").disabled = true;
   }
 }
 
@@ -622,6 +668,61 @@ document.getElementById("groupMessaging").addEventListener("change", event => {
 });
 
 // ==================================================
+// MANUAL TAKEOVER CONTROL
+// ==================================================
+
+async function updateManualTakeover(enabled) {
+  const accountId = document.getElementById("takeoverAccount").value;
+  const toggle = document.getElementById("takeoverToggle");
+
+  if (!accountId) {
+    showMessage("takeoverResult", "Select a connected WhatsApp account.");
+    toggle.checked = false;
+    return;
+  }
+
+  toggle.disabled = true;
+
+  try {
+    showMessage(
+      "takeoverResult",
+      enabled
+        ? "Activating manual takeover..."
+        : "Releasing manual takeover. Manny will resume replying..."
+    );
+
+    const data = await api(
+      "/api/accounts/" + encodeURIComponent(accountId) + "/takeover",
+      {
+        method: "POST",
+        body: JSON.stringify({ enabled })
+      }
+    );
+
+    showMessage(
+      "takeoverResult",
+      data.message || "Manual takeover updated successfully."
+    );
+
+    await loadStatus();
+
+  } catch (error) {
+    showMessage("takeoverResult", error.message);
+    await loadStatus();
+  } finally {
+    updateTakeoverDisplay();
+  }
+}
+
+document.getElementById("takeoverAccount").addEventListener("change", () => {
+  updateTakeoverDisplay();
+});
+
+document.getElementById("takeoverToggle").addEventListener("change", event => {
+  updateManualTakeover(event.target.checked);
+});
+
+// ==================================================
 // REMOVE ACCOUNT
 // ==================================================
 
@@ -648,42 +749,6 @@ async function disconnectAccount(id) {
 
   } catch (error) {
     showMessage("systemStatus", error.message);
-  }
-}
-
-// ==================================================
-// RELEASE TAKEOVER
-// ==================================================
-
-async function releaseTakeover() {
-  const accountId = document.getElementById("takeoverAccount").value;
-  const phone = document.getElementById("takeoverPhone").value.replace(/\D/g, "");
-
-  if (!accountId) {
-    showMessage("takeoverResult", "Select a connected WhatsApp account.");
-    return;
-  }
-
-  if (!/^\d{10,15}$/.test(phone)) {
-    showMessage("takeoverResult", "Enter a valid phone number with country code.");
-    return;
-  }
-
-  try {
-    showMessage("takeoverResult", "Releasing takeover...");
-
-    const data = await api("/api/takeover/release", {
-      method: "POST",
-      body: JSON.stringify({ accountId, phone })
-    });
-
-    showMessage(
-      "takeoverResult",
-      data.message || "Takeover released. Manny can now reply."
-    );
-
-  } catch (error) {
-    showMessage("takeoverResult", error.message);
   }
 }
 
