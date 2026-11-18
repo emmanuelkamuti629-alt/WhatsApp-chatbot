@@ -1,3 +1,4 @@
+HTML
 
 <!DOCTYPE html>
 <html lang="en">
@@ -8,42 +9,194 @@
 
 <style>
 *{box-sizing:border-box}
-body{margin:0;padding:20px;font-family:Arial,sans-serif;background:#0b1120;color:#e5e7eb}
-.container{max-width:900px;margin:auto}
-h1{text-align:center;color:#38bdf8;margin-bottom:5px}
-.subtitle{text-align:center;color:#94a3b8;margin-bottom:25px}
-.card{background:#172033;border:1px solid #334155;border-radius:14px;padding:18px;margin-bottom:18px}
-h2{margin-top:0;font-size:20px;color:#38bdf8}
-label{display:block;margin:12px 0 7px;color:#cbd5e1}
-input,select,textarea{width:100%;padding:13px;border-radius:9px;border:1px solid #475569;background:#0f172a;color:white;outline:none;margin-bottom:10px;font-size:15px}
-button{padding:12px 16px;border:0;border-radius:8px;cursor:pointer;font-weight:bold;margin:5px 3px 5px 0}
+
+body{
+  margin:0;
+  padding:20px;
+  font-family:Arial,sans-serif;
+  background:#0b1120;
+  color:#e5e7eb;
+}
+
+.container{max-width:950px;margin:auto}
+
+h1{margin:0 0 8px;color:#fff}
+h2{margin-top:0;color:#fff;font-size:19px}
+
+.muted{color:#94a3b8;font-size:13px;line-height:1.6}
+.card{
+  background:#111c30;
+  border:1px solid #26354d;
+  border-radius:14px;
+  padding:20px;
+  margin:18px 0;
+}
+
+label{
+  display:block;
+  margin:13px 0 7px;
+  font-size:13px;
+  color:#cbd5e1;
+}
+
+input,select,textarea{
+  width:100%;
+  padding:12px;
+  border:1px solid #334155;
+  border-radius:8px;
+  background:#0b1120;
+  color:#fff;
+  outline:none;
+  font-size:14px;
+}
+
+textarea{min-height:100px;resize:vertical}
+
+button{
+  border:0;
+  border-radius:8px;
+  padding:12px 16px;
+  background:#2563eb;
+  color:#fff;
+  font-weight:bold;
+  cursor:pointer;
+  margin-top:12px;
+}
+
+button:hover{opacity:.9}
 button:disabled{opacity:.5;cursor:not-allowed}
-.primary{background:#0284c7;color:white}
-.success{background:#16a34a;color:white}
-.danger{background:#dc2626;color:white}
-.secondary{background:#475569;color:white}
-.status{padding:12px;background:#0f172a;border-radius:9px;margin-top:10px;color:#cbd5e1;overflow-wrap:anywhere}
-.account{background:#0f172a;border:1px solid #334155;padding:14px;border-radius:10px;margin-bottom:12px}
-.account-name{font-weight:bold;font-size:17px;margin-bottom:8px}
-.online{color:#4ade80}
-.offline{color:#f87171}
-.muted{color:#94a3b8;font-size:13px}
-.switch-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid #334155}
-.switch-row:last-child{border-bottom:none}
-.switch{position:relative;width:52px;height:28px;flex-shrink:0;margin:0}
-.switch input{display:none}
-.slider{position:absolute;inset:0;background:#475569;border-radius:30px;cursor:pointer;transition:.2s}
-.slider:before{content:"";position:absolute;height:20px;width:20px;left:4px;top:4px;background:white;border-radius:50%;transition:.2s}
-.switch input:checked+.slider{background:#16a34a}
-.switch input:checked+.slider:before{transform:translateX(24px)}
-.qr-area{text-align:center;margin-top:15px}
-.qr-area img{max-width:230px;width:100%;background:white;padding:10px;border-radius:8px}
+
+button.success{background:#16a34a}
+button.danger{background:#dc2626}
+button.secondary{background:#475569}
+
+.status{
+  background:#0b1120;
+  border:1px solid #334155;
+  border-radius:8px;
+  padding:12px;
+  margin-top:12px;
+  font-size:13px;
+  line-height:1.6;
+  overflow-wrap:anywhere;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:12px;
+}
+
+.stat{
+  background:#0b1120;
+  border:1px solid #334155;
+  border-radius:10px;
+  padding:14px;
+}
+
+.stat strong{display:block;font-size:22px;margin-top:6px}
+
+.account{
+  padding:13px;
+  border:1px solid #334155;
+  border-radius:9px;
+  margin:10px 0;
+  background:#0b1120;
+}
+
+.account-top{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.account-name{font-weight:bold;color:#fff}
+
+.badge{
+  font-size:11px;
+  padding:5px 9px;
+  border-radius:20px;
+  background:#475569;
+}
+
+.badge.online{background:#14532d;color:#bbf7d0}
+.badge.offline{background:#7f1d1d;color:#fecaca}
+
+.switch-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:15px;
+  padding:15px;
+  background:#0b1120;
+  border:1px solid #334155;
+  border-radius:10px;
+  margin-top:15px;
+}
+
+.switch{
+  position:relative;
+  display:inline-block;
+  width:54px;
+  height:29px;
+  flex-shrink:0;
+  margin:0;
+}
+
+.switch input{
+  opacity:0;
+  width:0;
+  height:0;
+}
+
+.slider{
+  position:absolute;
+  cursor:pointer;
+  inset:0;
+  background:#475569;
+  transition:.3s;
+  border-radius:30px;
+}
+
+.slider:before{
+  position:absolute;
+  content:"";
+  height:21px;
+  width:21px;
+  left:4px;
+  bottom:4px;
+  background:white;
+  transition:.3s;
+  border-radius:50%;
+}
+
+.switch input:checked + .slider{background:#16a34a}
+.switch input:checked + .slider:before{transform:translateX(25px)}
+.switch input:disabled + .slider{opacity:.5;cursor:not-allowed}
+
+hr{border:0;border-top:1px solid #334155;margin:18px 0}
+
 .hidden{display:none}
-.actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
-.code{font-size:25px;font-weight:bold;letter-spacing:3px;color:#4ade80;text-align:center}
+
+.header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+}
+
+.small{font-size:12px;color:#94a3b8}
+
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+
+.actions button{margin-top:8px}
+
 @media(max-width:600px){
- body{padding:12px}
- .card{padding:15px}
+  body{padding:12px}
+  .card{padding:15px}
 }
 </style>
 </head>
@@ -51,706 +204,754 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <body>
 <div class="container">
 
-<h1>NONCHALANT_Q</h1>
-<p class="subtitle">WhatsApp AI Bot Control Dashboard</p>
+  <div class="header">
+    <div>
+      <h1>NONCHALANT_Q</h1>
+      <p class="muted">WhatsApp Bot Admin Dashboard</p>
+    </div>
+    <button class="danger" id="logoutBtn" onclick="logout()">LOG OUT</button>
+  </div>
 
-<!-- ADMIN AUTHENTICATION -->
-<div class="card">
-<h2>Admin Authentication</h2>
-<p class="muted">Enter the exact ADMIN_CONTROL_TOKEN configured in your Render environment variables. If that variable is empty, leave this field blank.</p>
+  <!-- LOGIN -->
+  <div class="card" id="loginCard">
+    <h2>Admin Login</h2>
+    <p class="muted">Enter your admin control token to access the dashboard.</p>
 
-<label>Admin Token</label>
-<input type="password" id="adminToken" placeholder="Enter your admin token">
+    <label>Admin Token</label>
+    <input type="password" id="adminToken" placeholder="Enter admin token">
 
-<button class="primary" onclick="saveToken()">SAVE TOKEN</button>
-<button class="secondary" onclick="clearToken()">CLEAR TOKEN</button>
+    <button onclick="login()">LOGIN</button>
+    <div id="loginResult" class="status">Waiting for login.</div>
+  </div>
 
-<div id="tokenMessage" class="status">Enter your admin token to access dashboard controls.</div>
-</div>
+  <!-- DASHBOARD -->
+  <div id="dashboard" class="hidden">
 
-<!-- SYSTEM STATUS -->
-<div class="card">
-<h2>System Status</h2>
-<div id="systemStatus" class="status">Waiting for authentication...</div>
-<button class="secondary" onclick="loadStatus()">REFRESH STATUS</button>
-</div>
+    <!-- STATUS -->
+    <div class="card">
+      <h2>System Overview</h2>
 
-<!-- BOT SETTINGS -->
-<div class="card">
-<h2>Bot Settings</h2>
+      <div class="grid">
+        <div class="stat">
+          <span class="muted">Bot Power</span>
+          <strong id="botPowerText">---</strong>
+        </div>
 
-<div class="switch-row">
-<div>
-<strong>Main Bot Power</strong>
-<div class="muted">Turn Manny's automatic replies on or off.</div>
-</div>
-<label class="switch">
-<input type="checkbox" id="botPower" disabled>
-<span class="slider"></span>
-</label>
-</div>
+        <div class="stat">
+          <span class="muted">Group Messaging</span>
+          <strong id="groupPowerText">---</strong>
+        </div>
 
-<div class="switch-row">
-<div>
-<strong>Group Messaging</strong>
-<div class="muted">Allow or block automatic replies in groups.</div>
-</div>
-<label class="switch">
-<input type="checkbox" id="groupMessaging" disabled>
-<span class="slider"></span>
-</label>
-</div>
+        <div class="stat">
+          <span class="muted">Connected Accounts</span>
+          <strong id="connectedCount">0</strong>
+        </div>
 
-<div id="settingsMessage" class="status">Settings will appear here.</div>
-</div>
+        <div class="stat">
+          <span class="muted">Total Accounts</span>
+          <strong id="totalCount">0</strong>
+        </div>
+      </div>
 
-<!-- LINKED ACCOUNTS -->
-<div class="card">
-<h2>Linked WhatsApp Accounts</h2>
-<p class="muted">View your WhatsApp accounts. Select an account to pair it or remove it.</p>
-<div id="accountsList">Waiting for authentication...</div>
-</div>
+      <div id="systemStatus" class="status">Loading system status...</div>
+    </div>
 
-<!-- ADD ACCOUNT -->
-<div class="card">
-<h2>Link Another WhatsApp Account</h2>
+    <!-- BOT POWER -->
+    <div class="card">
+      <h2>Main Bot Control</h2>
+      <p class="muted">
+        Switch the main bot ON or OFF. This controls automatic replies across all linked accounts.
+      </p>
 
-<label>Account Name (Optional)</label>
-<input type="text" id="accountName" placeholder="e.g. Personal WhatsApp">
+      <div class="switch-row">
+        <div>
+          <strong>Main Bot Power</strong>
+          <div class="muted" id="botPowerLabel">Loading...</div>
+        </div>
 
-<button class="primary" id="createAccountBtn" onclick="createAccount()">LINK NEW ACCOUNT</button>
+        <label class="switch">
+          <input type="checkbox" id="botPowerToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
 
-<div id="pairingArea" class="hidden">
+      <div id="botPowerResult" class="status">Bot power status.</div>
+    </div>
 
-<div id="pairingStatus" class="status">Preparing connection...</div>
+    <!-- GROUP MESSAGING -->
+    <div class="card">
+      <h2>Group Messaging Control</h2>
+      <p class="muted">
+        When ON, Manny can automatically reply to group messages on connected accounts.
+        When OFF, group automatic replies are disabled. This setting is separate from private-chat manual takeover.
+      </p>
 
-<div class="qr-area">
-<h3>Scan QR Code</h3>
-<img id="qrImage" class="hidden" alt="WhatsApp QR Code">
-</div>
+      <div class="switch-row">
+        <div>
+          <strong>Allow Group Messaging</strong>
+          <div class="muted" id="groupPowerLabel">Loading...</div>
+        </div>
 
-<label>Phone Number with Country Code</label>
-<input type="tel" id="pairPhone" placeholder="2547XXXXXXXX">
+        <label class="switch">
+          <input type="checkbox" id="groupPowerToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
 
-<button class="success" id="pairButton" onclick="requestPairingCode()">GET PAIRING CODE</button>
+      <div id="groupPowerResult" class="status">Group messaging status.</div>
+    </div>
 
-<div id="pairCode" class="status">Your pairing code will appear here.</div>
+    <!-- MANUAL TAKEOVER -->
+    <div class="card">
+      <h2>Manual Takeover</h2>
+      <p class="muted">
+        Turn ON to pause Manny's automatic replies to private chats on the selected WhatsApp account.
+        Turn OFF to let Manny reply again immediately. Group replies are controlled separately.
+      </p>
 
-</div>
-</div>
+      <label for="takeoverAccount">Select Connected WhatsApp Account</label>
+      <select id="takeoverAccount">
+        <option value="">Select connected account</option>
+      </select>
 
-<!-- TAKEOVER -->
-<div class="card">
-<h2>Take Over Control</h2>
-<p class="muted">Release the 10-minute admin takeover early so Manny can reply to a private chat.</p>
+      <div class="switch-row">
+        <div>
+          <strong>Admin Manual Takeover</strong>
+          <div class="muted" id="takeoverStateText">Select a connected account.</div>
+        </div>
 
-<label>Select WhatsApp Account</label>
-<select id="takeoverAccount">
-<option value="">Select connected account</option>
-</select>
+        <label class="switch">
+          <input type="checkbox" id="takeoverToggle" disabled>
+          <span class="slider"></span>
+        </label>
+      </div>
 
-<label>Phone Number</label>
-<input type="tel" id="takeoverPhone" placeholder="2547XXXXXXXX">
+      <div id="takeoverResult" class="status">
+        Select a connected account to control takeover.
+      </div>
+    </div>
 
-<button class="success" onclick="releaseTakeover()">ALLOW BOT TO CHAT</button>
-<div id="takeoverResult" class="status">Takeover status will appear here.</div>
-</div>
+    <!-- LINKED ACCOUNTS -->
+    <div class="card">
+      <h2>Linked WhatsApp Accounts</h2>
+      <p class="muted">
+        View all linked accounts, their connection status and account controls.
+      </p>
 
-<!-- SEND MESSAGE -->
-<div class="card">
-<h2>Send a Message</h2>
+      <div id="accountsList">
+        Loading accounts...
+      </div>
+    </div>
 
-<label>Select WhatsApp Account</label>
-<select id="sendAccount">
-<option value="">Select connected account</option>
-</select>
+    <!-- ADD ACCOUNT -->
+    <div class="card">
+      <h2>Link Another WhatsApp Account</h2>
+      <p class="muted">
+        Create another account connection. You can link multiple WhatsApp accounts.
+      </p>
 
-<label>Recipient Phone Number</label>
-<input type="tel" id="recipientPhone" placeholder="2547XXXXXXXX">
+      <label>Account Name</label>
+      <input type="text" id="newAccountLabel" placeholder="Example: Main WhatsApp">
 
-<label>Message</label>
-<textarea id="messageText" rows="4" placeholder="Type your message..."></textarea>
+      <button onclick="createAccount()">CREATE ACCOUNT</button>
+      <div id="createAccountResult" class="status">Create a new WhatsApp account.</div>
+    </div>
 
-<button class="primary" onclick="sendMessage()">SEND MESSAGE</button>
-<div id="sendResult" class="status">Message status will appear here.</div>
-</div>
+    <!-- PAIRING -->
+    <div class="card">
+      <h2>Connect WhatsApp</h2>
 
+      <label>Select Account</label>
+      <select id="pairAccount">
+        <option value="">Select account</option>
+      </select>
+
+      <div class="actions">
+        <button onclick="connectAccount()">CONNECT / RECONNECT</button>
+        <button class="secondary" onclick="requestPairingCode()">PAIR WITH PHONE NUMBER</button>
+      </div>
+
+      <label>WhatsApp Phone Number</label>
+      <input type="tel" id="pairPhone" placeholder="2547XXXXXXXX">
+
+      <div id="pairingResult" class="status">
+        Select an account to connect.
+      </div>
+
+      <div id="qrContainer" class="hidden">
+        <p class="muted">Scan this QR code using WhatsApp Linked Devices.</p>
+        <img id="qrImage" alt="WhatsApp QR Code" style="width:100%;max-width:280px;background:white;padding:10px;border-radius:10px">
+      </div>
+
+      <div id="pairCodeContainer" class="hidden">
+        <p class="muted">Enter this pairing code in WhatsApp.</p>
+        <h1 id="pairCode" style="letter-spacing:5px"></h1>
+      </div>
+    </div>
+
+    <!-- SEND MESSAGE -->
+    <div class="card">
+      <h2>Send Manual WhatsApp Message</h2>
+      <p class="muted">Send a message using a connected WhatsApp account.</p>
+
+      <label>Select Account</label>
+      <select id="sendAccount">
+        <option value="">Select account</option>
+      </select>
+
+      <label>Recipient Phone Number</label>
+      <input type="tel" id="sendPhone" placeholder="2547XXXXXXXX">
+
+      <label>Message</label>
+      <textarea id="sendMessage" placeholder="Type your message..."></textarea>
+
+      <button class="success" onclick="sendManualMessage()">SEND MESSAGE</button>
+
+      <div id="sendResult" class="status">Ready to send.</div>
+    </div>
+
+    <div class="card">
+      <h2>Refresh Dashboard</h2>
+      <p class="muted">Refresh the account list and current bot settings.</p>
+      <button onclick="loadStatus()">REFRESH STATUS</button>
+      <div id="refreshResult" class="small"></div>
+    </div>
+
+  </div>
 </div>
 
 <script>
-let adminToken = localStorage.getItem("nonchalant_admin_token") || "";
+let token = sessionStorage.getItem("adminToken") || "";
 let accounts = [];
-let pairingAccountId = null;
-let statusTimer = null;
+let loadingStatus = false;
 
-document.getElementById("adminToken").value = adminToken;
+const $ = id => document.getElementById(id);
 
-// ==================================================
-// API HELPER
-// ==================================================
+function showMessage(id,message){
+  const element = $(id);
+  if(element) element.textContent = message || "";
+}
 
-async function api(url, options = {}) {
+async function api(url,options={}){
   const headers = {
-    "Content-Type": "application/json",
-    ...(options.headers || {})
+    "Content-Type":"application/json",
+    ...(options.headers || {}),
+    "Authorization":"Bearer " + token
   };
 
-  if (adminToken) {
-    headers["x-admin-token"] = adminToken;
-  }
-
-  const response = await fetch(url, {
+  const response = await fetch(url,{
     ...options,
     headers
   });
 
-  const data = await response.json().catch(() => ({}));
+  let data = {};
 
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new Error("Invalid admin token. Check the ADMIN_CONTROL_TOKEN in Render.");
-    }
+  try{
+    data = await response.json();
+  }catch(error){
+    data = {};
+  }
 
-    throw new Error(data.error || "Request failed. HTTP " + response.status);
+  if(!response.ok){
+    throw new Error(data.error || data.message || "Request failed.");
   }
 
   return data;
 }
 
-function showMessage(id, message) {
-  document.getElementById(id).textContent = message;
+function showDashboard(){
+  $("loginCard").classList.add("hidden");
+  $("dashboard").classList.remove("hidden");
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function showLogin(){
+  $("dashboard").classList.add("hidden");
+  $("loginCard").classList.remove("hidden");
 }
 
-// ==================================================
-// TOKEN MANAGEMENT
-// ==================================================
+async function login(){
+  const enteredToken = $("adminToken").value.trim();
 
-function saveToken() {
-  const entered = document.getElementById("adminToken").value.trim();
-
-  adminToken = entered;
-
-  if (entered) {
-    localStorage.setItem("nonchalant_admin_token", entered);
-  } else {
-    localStorage.removeItem("nonchalant_admin_token");
-  }
-
-  showMessage("tokenMessage", "Token saved. Checking authentication...");
-  loadStatus();
-}
-
-function clearToken() {
-  adminToken = "";
-  localStorage.removeItem("nonchalant_admin_token");
-
-  document.getElementById("adminToken").value = "";
-
-  accounts = [];
-  renderAccounts();
-  populateAccountSelectors();
-
-  document.getElementById("botPower").disabled = true;
-  document.getElementById("groupMessaging").disabled = true;
-
-  showMessage("tokenMessage", "Saved token cleared.");
-  showMessage("systemStatus", "Enter your admin token to continue.");
-  showMessage("accountsList", "Authentication required.");
-}
-
-// ==================================================
-// ACCOUNT SELECTORS
-// ==================================================
-
-function populateAccountSelectors() {
-  const selectors = [
-    document.getElementById("sendAccount"),
-    document.getElementById("takeoverAccount")
-  ];
-
-  selectors.forEach(select => {
-    const oldValue = select.value;
-
-    select.innerHTML = "";
-
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Select connected account";
-    select.appendChild(placeholder);
-
-    accounts.filter(account => account.connected).forEach(account => {
-      const option = document.createElement("option");
-      option.value = account.id;
-      option.textContent = account.label || account.id;
-      select.appendChild(option);
-    });
-
-    if ([...select.options].some(option => option.value === oldValue)) {
-      select.value = oldValue;
-    }
-  });
-}
-
-// ==================================================
-// RENDER LINKED ACCOUNTS
-// ==================================================
-
-function renderAccounts() {
-  const container = document.getElementById("accountsList");
-  container.innerHTML = "";
-
-  if (!accounts.length) {
-    container.textContent = "No WhatsApp accounts found.";
+  if(!enteredToken){
+    showMessage("loginResult","Please enter your admin token.");
     return;
   }
 
+  token = enteredToken;
+  sessionStorage.setItem("adminToken",token);
+
+  try{
+    await loadStatus();
+    showDashboard();
+    showMessage("loginResult","Login successful.");
+  }catch(error){
+    token = "";
+    sessionStorage.removeItem("adminToken");
+    showMessage("loginResult",error.message);
+  }
+}
+
+function logout(){
+  token = "";
+  sessionStorage.removeItem("adminToken");
+  showLogin();
+}
+
+function populateAccountSelectors(){
+  const connectedAccounts = accounts.filter(account => account.connected);
+
+  const selectors = [
+    $("takeoverAccount"),
+    $("sendAccount"),
+    $("pairAccount")
+  ];
+
+  selectors.forEach(select => {
+    const previousValue = select.value;
+
+    const firstText = select.id === "takeoverAccount"
+      ? "Select connected account"
+      : "Select account";
+
+    select.innerHTML = "";
+
+    const firstOption = document.createElement("option");
+    firstOption.value = "";
+    firstOption.textContent = firstText;
+    select.appendChild(firstOption);
+
+    const source = select.id === "pairAccount"
+      ? accounts
+      : connectedAccounts;
+
+    source.forEach(account => {
+      const option = document.createElement("option");
+      option.value = account.id;
+      option.textContent =
+        (account.label || account.id) +
+        (account.connected ? " — Connected" : " — Disconnected");
+
+      select.appendChild(option);
+    });
+
+    if([...select.options].some(option => option.value === previousValue)){
+      select.value = previousValue;
+    }
+  });
+
+  updateTakeoverDisplay();
+}
+
+function renderAccounts(){
+  const container = $("accountsList");
+
+  if(!accounts.length){
+    container.textContent = "No WhatsApp accounts have been created.";
+    return;
+  }
+
+  container.innerHTML = "";
+
   accounts.forEach(account => {
-    const div = document.createElement("div");
-    div.className = "account";
+    const item = document.createElement("div");
+    item.className = "account";
 
-    const name = document.createElement("div");
+    const top = document.createElement("div");
+    top.className = "account-top";
+
+    const name = document.createElement("span");
     name.className = "account-name";
-    name.textContent = account.label || "WhatsApp Account";
+    name.textContent = account.label || account.id;
 
-    const status = document.createElement("div");
-    status.className = account.connected ? "online" : "offline";
-    status.textContent = account.connected
-      ? "● CONNECTED"
-      : "● " + String(account.state || "DISCONNECTED").toUpperCase();
+    const badge = document.createElement("span");
+    badge.className = "badge " + (account.connected ? "online" : "offline");
+    badge.textContent = account.connected ? "CONNECTED" : "DISCONNECTED";
 
-    const id = document.createElement("div");
-    id.className = "muted";
-    id.textContent = "Account ID: " + account.id;
+    top.appendChild(name);
+    top.appendChild(badge);
+
+    const details = document.createElement("p");
+    details.className = "small";
+    details.textContent =
+      "Account ID: " + account.id +
+      " | Manual takeover: " +
+      (account.manualTakeover ? "ON" : "OFF");
 
     const actions = document.createElement("div");
     actions.className = "actions";
 
-    const pairButton = document.createElement("button");
-    pairButton.className = "primary";
-    pairButton.textContent = "PAIR THIS ACCOUNT";
-    pairButton.onclick = () => selectAccountForPairing(account.id);
+    const reconnect = document.createElement("button");
+    reconnect.textContent = "RECONNECT";
+    reconnect.onclick = () => reconnectAccount(account.id);
 
-    const removeButton = document.createElement("button");
-    removeButton.className = "danger";
-    removeButton.textContent = "REMOVE ACCOUNT";
-    removeButton.onclick = () => disconnectAccount(account.id);
+    const remove = document.createElement("button");
+    remove.textContent = "DISCONNECT / REMOVE";
+    remove.className = "danger";
+    remove.onclick = () => removeAccount(account.id);
 
-    actions.appendChild(pairButton);
-    actions.appendChild(removeButton);
+    actions.appendChild(reconnect);
+    actions.appendChild(remove);
 
-    div.appendChild(name);
-    div.appendChild(status);
-    div.appendChild(id);
-    div.appendChild(actions);
+    item.appendChild(top);
+    item.appendChild(details);
+    item.appendChild(actions);
 
-    container.appendChild(div);
+    container.appendChild(item);
   });
 }
 
-// ==================================================
-// STATUS
-// ==================================================
+function updateTakeoverDisplay(){
+  const select = $("takeoverAccount");
+  const toggle = $("takeoverToggle");
+  const text = $("takeoverStateText");
 
-async function loadStatus() {
-  if (!adminToken) {
-    showMessage("systemStatus", "Enter your admin token above.");
-    showMessage("accountsList", "Authentication required.");
+  const account = accounts.find(item =>
+    item.id === select.value && item.connected
+  );
+
+  if(!account){
+    toggle.checked = false;
+    toggle.disabled = true;
+    text.textContent = "Select a connected account.";
     return;
   }
 
-  try {
+  toggle.checked = Boolean(account.manualTakeover);
+  toggle.disabled = false;
+
+  text.textContent = account.manualTakeover
+    ? "ON — Manny is paused for private chats on this account."
+    : "OFF — Manny is replying to private chats on this account.";
+}
+
+async function loadStatus(){
+  if(!token) return;
+
+  if(loadingStatus) return;
+  loadingStatus = true;
+
+  try{
     const data = await api("/api/status");
-
-    document.getElementById("botPower").checked = Boolean(data.botPower);
-    document.getElementById("groupMessaging").checked = Boolean(data.groupMessaging);
-
-    document.getElementById("botPower").disabled = false;
-    document.getElementById("groupMessaging").disabled = false;
-
-    showMessage("tokenMessage", "Admin authentication successful.");
-
-    showMessage(
-      "systemStatus",
-      "Server: Online | MongoDB: " +
-      (data.mongoConnected ? "Connected" : "Disconnected") +
-      " | Gemini: " +
-      (data.aiConnected ? "Connected" : "Not connected") +
-      " | Bot: " +
-      (data.botPower ? "ON" : "OFF") +
-      " | Group Messaging: " +
-      (data.groupMessaging ? "ON" : "OFF")
-    );
 
     accounts = Array.isArray(data.accounts) ? data.accounts : [];
 
     renderAccounts();
     populateAccountSelectors();
-    updatePairingDisplay();
+    updateTakeoverDisplay();
 
-  } catch (error) {
-    showMessage("systemStatus", error.message);
-    showMessage("accountsList", "Unable to load accounts: " + error.message);
-    showMessage("tokenMessage", "Authentication failed. Check your token.");
+    const connected = accounts.filter(item => item.connected).length;
 
-    document.getElementById("botPower").disabled = true;
-    document.getElementById("groupMessaging").disabled = true;
-  }
-}
+    $("connectedCount").textContent = connected;
+    $("totalCount").textContent = accounts.length;
 
-// ==================================================
-// PAIRING DISPLAY
-// ==================================================
+    const botPower = Boolean(data.botPower);
+    const groupMessaging = Boolean(data.groupMessaging);
 
-function updatePairingDisplay() {
-  if (!pairingAccountId) return;
+    $("botPowerText").textContent = botPower ? "ON" : "OFF";
+    $("groupPowerText").textContent = groupMessaging ? "ON" : "OFF";
 
-  const account = accounts.find(item => item.id === pairingAccountId);
+    $("botPowerToggle").checked = botPower;
+    $("groupPowerToggle").checked = groupMessaging;
 
-  if (!account) return;
+    $("botPowerLabel").textContent = botPower
+      ? "ON — Automatic bot replies enabled."
+      : "OFF — Automatic bot replies disabled.";
 
-  if (account.connected) {
-    showMessage("pairingStatus", "WhatsApp account connected successfully.");
-
-    document.getElementById("qrImage").classList.add("hidden");
-
-    showMessage("pairCode", "Your WhatsApp account is connected.");
-
-    return;
-  }
-
-  showMessage(
-    "pairingStatus",
-    "Account status: " + String(account.state || "starting").toUpperCase()
-  );
-
-  if (account.qr) {
-    const qr = document.getElementById("qrImage");
-    qr.src = account.qr;
-    qr.classList.remove("hidden");
-  } else {
-    document.getElementById("qrImage").classList.add("hidden");
-  }
-
-  if (account.pairingCode) {
-    showMessage("pairCode", "PAIRING CODE: " + account.pairingCode);
-  }
-}
-
-// ==================================================
-// SELECT ACCOUNT FOR PAIRING
-// ==================================================
-
-function selectAccountForPairing(id) {
-  pairingAccountId = id;
-
-  document.getElementById("pairingArea").classList.remove("hidden");
-
-  showMessage("pairingStatus", "Selected account. Checking WhatsApp connection...");
-  showMessage("pairCode", "Enter your phone number and request a pairing code.");
-
-  updatePairingDisplay();
-
-  document.getElementById("pairingArea").scrollIntoView({
-    behavior: "smooth"
-  });
-}
-
-// ==================================================
-// CREATE ACCOUNT
-// ==================================================
-
-async function createAccount() {
-  const button = document.getElementById("createAccountBtn");
-  button.disabled = true;
-
-  try {
-    const label = document.getElementById("accountName").value.trim();
-
-    showMessage("systemStatus", "Creating WhatsApp account...");
-
-    const data = await api("/api/accounts", {
-      method: "POST",
-      body: JSON.stringify({ label })
-    });
-
-    pairingAccountId = data.account?.id;
-
-    if (!pairingAccountId) {
-      throw new Error("Server did not return the new account ID.");
-    }
-
-    document.getElementById("pairingArea").classList.remove("hidden");
+    $("groupPowerLabel").textContent = groupMessaging
+      ? "ON — Group automatic replies allowed."
+      : "OFF — Group automatic replies disabled.";
 
     showMessage(
-      "pairingStatus",
-      "Account created. Waiting for WhatsApp connection..."
+      "systemStatus",
+      "System connected. " + connected + " of " + accounts.length +
+      " WhatsApp accounts are connected."
     );
 
-    showMessage("pairCode", "Enter your phone number to request a pairing code.");
+    showMessage("refreshResult","Last refreshed: " + new Date().toLocaleTimeString());
 
-    await loadStatus();
+    showDashboard();
 
-    document.getElementById("pairingArea").scrollIntoView({
-      behavior: "smooth"
-    });
-
-  } catch (error) {
-    showMessage("pairingStatus", error.message);
-    document.getElementById("pairingArea").classList.remove("hidden");
-  } finally {
-    button.disabled = false;
+  }catch(error){
+    showMessage("systemStatus",error.message);
+    $("takeoverToggle").disabled = true;
+  }finally{
+    loadingStatus = false;
   }
 }
 
-// ==================================================
-// REQUEST PAIRING CODE
-// ==================================================
+async function setBotPower(enabled){
+  $("botPowerToggle").disabled = true;
 
-async function requestPairingCode() {
-  if (!pairingAccountId) {
-    showMessage("pairCode", "Select or create an account first.");
-    return;
-  }
+  try{
+    const data = await api("/api/bot-power",{
+      method:"POST",
+      body:JSON.stringify({enabled})
+    });
 
-  const phone = document.getElementById("pairPhone").value.replace(/\D/g, "");
-
-  if (!/^\d{10,15}$/.test(phone)) {
-    showMessage("pairCode", "Enter a valid phone number with country code, e.g. 2547XXXXXXXX.");
-    return;
-  }
-
-  const button = document.getElementById("pairButton");
-  button.disabled = true;
-
-  try {
-    showMessage("pairCode", "Connecting to WhatsApp and requesting your code...");
-
-    let result = null;
-    let lastError = null;
-
-    // Retry briefly if the WhatsApp socket is still starting.
-    for (let attempt = 1; attempt <= 15; attempt++) {
-      try {
-        result = await api(
-          "/api/accounts/" + encodeURIComponent(pairingAccountId) + "/pair",
-          {
-            method: "POST",
-            body: JSON.stringify({ phone })
-          }
-        );
-
-        break;
-
-      } catch (error) {
-        lastError = error;
-
-        const retryable =
-          /still starting|not ready|connection closed|timed out|connection is not open/i.test(error.message);
-
-        if (!retryable || attempt === 15) {
-          throw error;
-        }
-
-        showMessage(
-          "pairCode",
-          "WhatsApp is preparing the connection. Retrying... (" + attempt + "/15)"
-        );
-
-        await sleep(1000);
-      }
-    }
-
-    if (!result) {
-      throw lastError || new Error("Pairing code could not be generated.");
-    }
-
-    if (result.code) {
-      showMessage("pairCode", "PAIRING CODE: " + result.code);
-    } else if (result.pairingCode) {
-      showMessage("pairCode", "PAIRING CODE: " + result.pairingCode);
-    } else {
-      showMessage("pairCode", "The server did not return a pairing code. Please try again.");
-    }
-
+    showMessage("botPowerResult",data.message || "Bot power updated.");
     await loadStatus();
 
-  } catch (error) {
-    showMessage("pairCode", error.message);
-  } finally {
-    button.disabled = false;
+  }catch(error){
+    showMessage("botPowerResult",error.message);
+    await loadStatus();
+  }finally{
+    $("botPowerToggle").disabled = false;
   }
 }
 
-// ==================================================
-// BOT SETTINGS
-// ==================================================
+async function setGroupMessaging(enabled){
+  $("groupPowerToggle").disabled = true;
 
-async function updateSetting(setting, enabled) {
-  try {
-    const endpoint = setting === "botPower"
-      ? "/api/bot-power"
-      : "/api/group-messaging";
-
-    await api(endpoint, {
-      method: "POST",
-      body: JSON.stringify({ enabled })
+  try{
+    const data = await api("/api/group-messaging",{
+      method:"POST",
+      body:JSON.stringify({enabled})
     });
 
-    showMessage(
-      "settingsMessage",
-      setting + " successfully turned " + (enabled ? "ON" : "OFF")
-    );
-
+    showMessage("groupPowerResult",data.message || "Group messaging updated.");
     await loadStatus();
 
-  } catch (error) {
-    showMessage("settingsMessage", error.message);
+  }catch(error){
+    showMessage("groupPowerResult",error.message);
     await loadStatus();
+  }finally{
+    $("groupPowerToggle").disabled = false;
   }
 }
 
-document.getElementById("botPower").addEventListener("change", event => {
-  updateSetting("botPower", event.target.checked);
-});
+async function setManualTakeover(enabled){
+  const accountId = $("takeoverAccount").value;
+  const toggle = $("takeoverToggle");
 
-document.getElementById("groupMessaging").addEventListener("change", event => {
-  updateSetting("groupMessaging", event.target.checked);
-});
-
-// ==================================================
-// REMOVE ACCOUNT
-// ==================================================
-
-async function disconnectAccount(id) {
-  if (!confirm(
-    "This will disconnect and REMOVE the account, including its saved WhatsApp authentication. You will need to pair it again. Continue?"
-  )) {
+  if(!accountId){
+    showMessage("takeoverResult","Select a connected account.");
+    toggle.checked = false;
     return;
   }
 
-  try {
-    await api("/api/accounts/" + encodeURIComponent(id), {
-      method: "DELETE"
-    });
+  toggle.disabled = true;
 
-    if (pairingAccountId === id) {
-      pairingAccountId = null;
-      document.getElementById("pairingArea").classList.add("hidden");
-    }
-
-    showMessage("systemStatus", "Account disconnected and removed.");
-
-    await loadStatus();
-
-  } catch (error) {
-    showMessage("systemStatus", error.message);
-  }
-}
-
-// ==================================================
-// RELEASE TAKEOVER
-// ==================================================
-
-async function releaseTakeover() {
-  const accountId = document.getElementById("takeoverAccount").value;
-  const phone = document.getElementById("takeoverPhone").value.replace(/\D/g, "");
-
-  if (!accountId) {
-    showMessage("takeoverResult", "Select a connected WhatsApp account.");
-    return;
-  }
-
-  if (!/^\d{10,15}$/.test(phone)) {
-    showMessage("takeoverResult", "Enter a valid phone number with country code.");
-    return;
-  }
-
-  try {
-    showMessage("takeoverResult", "Releasing takeover...");
-
-    const data = await api("/api/takeover/release", {
-      method: "POST",
-      body: JSON.stringify({ accountId, phone })
-    });
-
+  try{
     showMessage(
       "takeoverResult",
-      data.message || "Takeover released. Manny can now reply."
+      enabled
+        ? "Activating manual takeover..."
+        : "Releasing manual takeover. Manny will resume replying..."
     );
 
-  } catch (error) {
-    showMessage("takeoverResult", error.message);
+    const data = await api(
+      "/api/accounts/" + encodeURIComponent(accountId) + "/takeover",
+      {
+        method:"POST",
+        body:JSON.stringify({enabled})
+      }
+    );
+
+    showMessage("takeoverResult",data.message || "Takeover updated.");
+
+    await loadStatus();
+
+  }catch(error){
+    showMessage("takeoverResult",error.message);
+    await loadStatus();
+  }finally{
+    updateTakeoverDisplay();
   }
 }
 
-// ==================================================
-// SEND MANUAL MESSAGE
-// ==================================================
+async function createAccount(){
+  const label = $("newAccountLabel").value.trim();
 
-async function sendMessage() {
-  const accountId = document.getElementById("sendAccount").value;
-  const phone = document.getElementById("recipientPhone").value.replace(/\D/g, "");
-  const message = document.getElementById("messageText").value.trim();
-
-  if (!accountId) {
-    showMessage("sendResult", "Select a connected WhatsApp account.");
+  if(!label){
+    showMessage("createAccountResult","Enter an account name.");
     return;
   }
 
-  if (!/^\d{10,15}$/.test(phone)) {
-    showMessage("sendResult", "Enter a valid phone number with country code.");
+  try{
+    const data = await api("/api/accounts",{
+      method:"POST",
+      body:JSON.stringify({label})
+    });
+
+    showMessage("createAccountResult",data.message || "Account created.");
+    $("newAccountLabel").value = "";
+
+    await loadStatus();
+
+  }catch(error){
+    showMessage("createAccountResult",error.message);
+  }
+}
+
+async function connectAccount(){
+  const accountId = $("pairAccount").value;
+
+  if(!accountId){
+    showMessage("pairingResult","Select an account first.");
     return;
   }
 
-  if (!message) {
-    showMessage("sendResult", "Enter a message first.");
+  $("qrContainer").classList.add("hidden");
+  $("pairCodeContainer").classList.add("hidden");
+
+  try{
+    const data = await api(
+      "/api/accounts/" + encodeURIComponent(accountId) + "/connect",
+      {
+        method:"POST",
+        body:JSON.stringify({})
+      }
+    );
+
+    showMessage("pairingResult",data.message || "Connection started.");
+
+    if(data.qr){
+      $("qrImage").src = data.qr;
+      $("qrContainer").classList.remove("hidden");
+    }
+
+    if(data.code){
+      $("pairCode").textContent = data.code;
+      $("pairCodeContainer").classList.remove("hidden");
+    }
+
+    await loadStatus();
+
+  }catch(error){
+    showMessage("pairingResult",error.message);
+  }
+}
+
+async function requestPairingCode(){
+  const accountId = $("pairAccount").value;
+  const phone = $("pairPhone").value.trim();
+
+  if(!accountId){
+    showMessage("pairingResult","Select an account first.");
     return;
   }
 
-  try {
-    showMessage("sendResult", "Sending message...");
+  if(!phone){
+    showMessage("pairingResult","Enter your WhatsApp phone number.");
+    return;
+  }
 
-    const data = await api("/api/send", {
-      method: "POST",
-      body: JSON.stringify({
+  $("qrContainer").classList.add("hidden");
+  $("pairCodeContainer").classList.add("hidden");
+
+  try{
+    const data = await api(
+      "/api/accounts/" + encodeURIComponent(accountId) + "/pair",
+      {
+        method:"POST",
+        body:JSON.stringify({phone})
+      }
+    );
+
+    showMessage("pairingResult",data.message || "Pairing code generated.");
+
+    if(data.code){
+      $("pairCode").textContent = data.code;
+      $("pairCodeContainer").classList.remove("hidden");
+    }
+
+    await loadStatus();
+
+  }catch(error){
+    showMessage("pairingResult",error.message);
+  }
+}
+
+async function reconnectAccount(accountId){
+  try{
+    const data = await api(
+      "/api/accounts/" + encodeURIComponent(accountId) + "/reconnect",
+      {
+        method:"POST",
+        body:JSON.stringify({})
+      }
+    );
+
+    showMessage("systemStatus",data.message || "Reconnection started.");
+    await loadStatus();
+
+  }catch(error){
+    showMessage("systemStatus",error.message);
+  }
+}
+
+async function removeAccount(accountId){
+  if(!confirm("Are you sure you want to disconnect and remove this WhatsApp account?")){
+    return;
+  }
+
+  try{
+    const data = await api(
+      "/api/accounts/" + encodeURIComponent(accountId),
+      {method:"DELETE"}
+    );
+
+    showMessage("systemStatus",data.message || "Account removed.");
+    await loadStatus();
+
+  }catch(error){
+    showMessage("systemStatus",error.message);
+  }
+}
+
+async function sendManualMessage(){
+  const accountId = $("sendAccount").value;
+  const phone = $("sendPhone").value.trim();
+  const message = $("sendMessage").value.trim();
+
+  if(!accountId || !phone || !message){
+    showMessage("sendResult","Select an account and enter a phone number and message.");
+    return;
+  }
+
+  try{
+    const data = await api("/api/send",{
+      method:"POST",
+      body:JSON.stringify({
         accountId,
-        to: phone,
+        phone,
         message
       })
     });
 
-    showMessage("sendResult", data.message || "Message sent successfully.");
+    showMessage("sendResult",data.message || "Message sent.");
 
-    document.getElementById("messageText").value = "";
-
-  } catch (error) {
-    showMessage("sendResult", error.message);
+  }catch(error){
+    showMessage("sendResult",error.message);
   }
 }
 
-// ==================================================
-// INITIAL LOAD AND AUTOMATIC REFRESH
-// ==================================================
+/* EVENT LISTENERS */
 
-if (adminToken) {
-  loadStatus();
-} else {
-  showMessage("systemStatus", "Enter your admin token above.");
-  showMessage("accountsList", "Authentication required.");
+$("botPowerToggle").addEventListener("change",event=>{
+  setBotPower(event.target.checked);
+});
+
+$("groupPowerToggle").addEventListener("change",event=>{
+  setGroupMessaging(event.target.checked);
+});
+
+$("takeoverAccount").addEventListener("change",updateTakeoverDisplay);
+
+$("takeoverToggle").addEventListener("change",event=>{
+  setManualTakeover(event.target.checked);
+});
+
+/* STARTUP */
+
+if(token){
+  loadStatus().catch(()=>{
+    logout();
+  });
+}else{
+  showLogin();
 }
-
-if (statusTimer) clearInterval(statusTimer);
-
-statusTimer = setInterval(() => {
-  if (adminToken) {
-    loadStatus();
-  }
-}, 5000);
-
 </script>
+
 </body>
 </html>
