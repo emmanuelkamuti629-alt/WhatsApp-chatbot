@@ -1,3 +1,4 @@
+JavaScript
 
 require('dotenv').config();
 
@@ -362,7 +363,7 @@ function createAccountRecord(id, label, manualTakeover = false) {
     qr: null,
     pairingCode: null,
 
-    // Account-wide private-chat manual takeover.
+    // Restored from MongoDB when accounts load.
     manualTakeover: manualTakeover === true,
 
     reconnectTimer: null,
@@ -375,7 +376,12 @@ function createAccountRecord(id, label, manualTakeover = false) {
   return account;
 }
 
+// Save account settings to MongoDB.
 async function saveAccountRecord(account) {
+  if (!accountsCollection) {
+    throw new Error('MongoDB account collection is not ready.');
+  }
+
   await accountsCollection.updateOne(
     { _id: account.id },
     {
@@ -392,6 +398,7 @@ async function saveAccountRecord(account) {
   );
 }
 
+// Restore account settings from MongoDB.
 async function loadAccounts() {
   const saved = await accountsCollection.find({}).toArray();
 
@@ -401,7 +408,9 @@ async function loadAccounts() {
       {
         $set: {
           label: 'Main WhatsApp',
-          manualTakeover: false,
+          manualTakeover: false
+        },
+        $setOnInsert: {
           createdAt: new Date()
         }
       },
@@ -418,6 +427,14 @@ async function loadAccounts() {
       item.manualTakeover === true
     );
   }
+
+  log('SUCCESS', 'Accounts and takeover settings restored', {
+    count: all.length,
+    accounts: all.map(item => ({
+      id: item._id,
+      manualTakeover: item.manualTakeover === true
+    }))
+  });
 }
 
 // =====================================================
@@ -614,7 +631,6 @@ async function sendText(account, jid, text, quoted) {
 
   const isGroup = String(jid || '').endsWith('@g.us');
 
-  // Groups get the prefix. Private chats stay normal.
   const outgoingText = isGroup
     ? formatBotMessage(text)
     : String(text || '').trim();
@@ -954,8 +970,7 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
-  // Recheck switches after AI generation in case the admin
-  // changed a setting while the AI request was running.
+  // Recheck switches after AI generation.
   if (!botPower) return;
 
   if (isGroup && !groupMessaging) return;
@@ -1068,7 +1083,10 @@ async function connectAccount(accountId) {
         account.pairingCode = null;
         account.reconnectAttempts = 0;
 
-        log('SUCCESS', 'WhatsApp account connected', account.id);
+        log('SUCCESS', 'WhatsApp account connected', {
+          account: account.id,
+          manualTakeover: account.manualTakeover
+        });
       }
 
       if (connection === 'close') {
@@ -1348,7 +1366,6 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
-    // This changes the live setting immediately.
     groupMessaging = enabled;
 
     await saveSettings();
@@ -1358,8 +1375,6 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     });
 
     if (enabled && !wasEnabled) {
-      // Announcement runs in the background.
-      // New incoming group messages can be answered immediately.
       announceAllGroups().catch(error => {
         log('ERROR', 'Group enable announcement failed', error);
       });
@@ -1388,7 +1403,15 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
 
 app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
   try {
-    const account = accounts.get(req.params.id);
+    const id = String(req.params.id || '');
+
+    if (!validAccountId(id)) {
+      return res.status(400).json({
+        error: 'Invalid account ID.'
+      });
+    }
+
+    const account = accounts.get(id);
 
     if (!account) {
       return res.status(404).json({
@@ -1410,11 +1433,27 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
       });
     }
 
+    // Persist the requested setting in MongoDB first.
+    // Only update in-memory state after MongoDB confirms success.
+    await accountsCollection.updateOne(
+      { _id: account.id },
+      {
+        $set: {
+          manualTakeover: enabled,
+          label: account.label,
+          updatedAt: new Date()
+        },
+        $setOnInsert: {
+          createdAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    // Update the live account after successful persistence.
     account.manualTakeover = enabled;
 
-    await saveAccountRecord(account);
-
-    log('SUCCESS', 'Account-wide manual takeover changed', {
+    log('SUCCESS', 'Account-wide manual takeover saved to MongoDB', {
       account: account.id,
       enabled
     });
@@ -1424,21 +1463,22 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
       message: enabled
         ? `Manual takeover ON for ${account.label}. Manny has paused private-chat replies on this account. Group replies are unaffected.`
         : `Manual takeover OFF for ${account.label}. Manny can now resume private-chat replies immediately.`,
-      account: publicAccount(account)
+      account: publicAccount(account),
+      status: getDashboardStatus()
     });
 
   } catch (error) {
     log('ERROR', 'Manual takeover update failed', error);
 
     return res.status(500).json({
-      error: error.message
+      error: 'Could not save Manual Takeover setting. Please try again.',
+      details: error.message
     });
   }
 });
 
 // =====================================================
 // API: MANUALLY RELEASE OLD PER-CHAT TAKEOVER
-// Kept for backward compatibility.
 // =====================================================
 
 app.post('/api/takeover/release', adminAuth, async (req, res) => {
