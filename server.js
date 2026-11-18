@@ -1,3 +1,4 @@
+JavaScript
 
 require('dotenv').config();
 
@@ -47,7 +48,6 @@ const config = {
 
   announcementDelay: 500,
 
-  // Three minutes without an admin message.
   privateChatCooldown: 3 * 60 * 1000,
 
   personality: `
@@ -363,11 +363,7 @@ function createAccountRecord(id, label, manualTakeover = false) {
     reconnectAttempts: 0,
     generation: 0,
 
-    // IDs of messages sent by Manny.
-    // Used to distinguish Manny from actual admin messages.
     botSentIds: new Map(),
-
-    // Messages currently being sent.
     botSendingJids: new Map()
   };
 
@@ -465,9 +461,6 @@ async function getKnownChats(accountId) {
 // PRIVATE CHAT IDENTITY MATCHING
 // =====================================================
 
-// WhatsApp may identify the same contact using PN or LID.
-// Store and check all IDs supplied by Baileys.
-
 function getPrivateAliases(msg) {
   const key = msg?.key || {};
 
@@ -506,9 +499,6 @@ function getPrivateJidAliases(jid, jidAlt) {
 // =====================================================
 // PRIVATE CHAT ADMIN ACTIVITY
 // =====================================================
-
-// Each alias receives the same activity timestamp.
-// This allows PN and LID versions of a contact to match.
 
 async function markAdminActivity(accountId, aliases) {
   const validAliases = [...new Set(
@@ -575,10 +565,7 @@ async function isPrivateChatCoolingDown(accountId, aliases) {
     jid: { $in: validAliases }
   }).toArray();
 
-  if (!documents.length) {
-    // No previous outgoing message recorded.
-    return false;
-  }
+  if (!documents.length) return false;
 
   const latestActivity = Math.max(
     ...documents.map(document =>
@@ -617,7 +604,6 @@ function rememberBotMessage(account, jid, messageId) {
     expiresAt: Date.now() + 2 * 60 * 1000
   });
 
-  // Avoid unlimited memory usage.
   for (const [id, data] of account.botSentIds) {
     if (data.expiresAt < Date.now()) {
       account.botSentIds.delete(id);
@@ -776,8 +762,6 @@ async function sendText(account, jid, text, quoted) {
       options
     );
 
-    // Keep returned message ID so a delayed WhatsApp echo
-    // cannot be mistaken for an admin message.
     if (result?.key?.id) {
       rememberBotMessage(
         account,
@@ -801,15 +785,15 @@ async function sendText(account, jid, text, quoted) {
 }
 
 // =====================================================
-// ON / OFF ANNOUNCEMENTS
+// SHORT ON / OFF ANNOUNCEMENTS
 // =====================================================
 
-function announcementText(enabled) {
-  if (enabled) {
-    return '⚠️⚠️⚠️ NONCHALANT_Q BOT IS NOW ON!\n\nMay contain AI-generated media. The admin is currently away. The bot will handle messages automatically. 😊';
-  }
+// The ONLY announcement text sent when bot power changes.
 
-  return '⚠️⚠️⚠️ NONCHALANT_Q BOT IS NOW OFF!\n\nThe admin is back. Automatic AI replies have been disabled. 😊';
+function announcementText(enabled) {
+  return enabled
+    ? '⚠️.bot*\nEnabled'
+    : '⚠️.bot*\nOff';
 }
 
 async function announceAccount(account, enabled) {
@@ -858,14 +842,12 @@ async function announceAllAccounts(enabled) {
 // GROUP ANNOUNCEMENTS
 // =====================================================
 
-function groupMessagingAnnouncementText() {
-  return [
-    '⚠️⚠️⚠️ NONCHALANT_Q',
-    '',
-    '🤖 NONCHALANT_Q group messaging bot enabled!',
-    '',
-    'A personal assistant robot, admin will be back soon. 😊'
-  ].join('\n');
+// Same short message for both group ON and OFF.
+
+function groupMessagingAnnouncementText(enabled) {
+  return enabled
+    ? '⚠️.bot*\nEnabled'
+    : '⚠️.bot*\nOff';
 }
 
 async function getAllAccountGroups(account) {
@@ -899,7 +881,7 @@ async function getAllAccountGroups(account) {
   return [...groupJids];
 }
 
-async function announceGroupMessagingAccount(account) {
+async function announceGroupMessagingAccount(account, enabled) {
   if (!account.connected || !account.sock) {
     return {
       account: account.id,
@@ -909,13 +891,12 @@ async function announceGroupMessagingAccount(account) {
   }
 
   const groups = await getAllAccountGroups(account);
-  const notice = groupMessagingAnnouncementText();
+  const notice = groupMessagingAnnouncementText(enabled);
 
   let sent = 0;
   let failed = 0;
 
   for (const groupJid of groups) {
-    if (!groupMessaging) break;
     if (!account.connected || !account.sock) break;
 
     try {
@@ -944,7 +925,10 @@ async function announceGroupMessagingAccount(account) {
   };
 }
 
-async function announceAllGroups() {
+// IMPORTANT:
+// This function now sends notifications for BOTH ON and OFF.
+
+async function announceAllGroups(enabled) {
   if (groupAnnouncementRunning) return;
 
   groupAnnouncementRunning = true;
@@ -953,19 +937,20 @@ async function announceAllGroups() {
     const results = [];
 
     for (const account of accounts.values()) {
-      if (!groupMessaging) break;
-
       if (account.connected) {
         results.push(
-          await announceGroupMessagingAccount(account)
+          await announceGroupMessagingAccount(account, enabled)
         );
       }
     }
 
-    log('SUCCESS', 'Group announcements processed', results);
+    log('SUCCESS', 'Group notifications processed', {
+      enabled,
+      results
+    });
 
   } catch (error) {
-    log('ERROR', 'Group announcement process failed', error);
+    log('ERROR', 'Group notification process failed', error);
 
   } finally {
     groupAnnouncementRunning = false;
@@ -1024,7 +1009,6 @@ async function processIncoming(account, msg) {
   if (msg.key.fromMe) {
     if (isGroup) return;
 
-    // Ignore Manny's own outgoing messages.
     if (isBotMessageEcho(account, msg)) {
       log('INFO', 'Manny outgoing echo ignored', {
         account: account.id,
@@ -1034,13 +1018,10 @@ async function processIncoming(account, msg) {
       return;
     }
 
-    // Ignore messages still being sent by Manny.
     if (account.botSendingJids.has(jid)) {
       return;
     }
 
-    // This is an actual message sent by the administrator.
-    // Record all available WhatsApp identity aliases.
     const aliases = getPrivateAliases(msg);
 
     await markAdminActivity(
@@ -1128,7 +1109,7 @@ async function processIncoming(account, msg) {
   if (!isGroup && account.manualTakeover) return;
 
   // ===================================================
-  // CRITICAL: CHECK TIMER AGAIN BEFORE SENDING
+  // CHECK TIMER AGAIN BEFORE SENDING
   // ===================================================
 
   if (!isGroup) {
@@ -1298,7 +1279,6 @@ async function connectAccount(accountId) {
       }
     });
 
-    // Listen to all message upserts, including outgoing messages.
     socket.ev.on('messages.upsert', async event => {
       for (const msg of event.messages || []) {
         try {
@@ -1526,17 +1506,16 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
 
     log('SUCCESS', 'Group messaging changed', { enabled });
 
-    if (enabled && !wasEnabled) {
-      announceAllGroups().catch(error => {
-        log('ERROR', 'Group enable announcement failed', error);
-      });
-    }
+    // Send short notification for BOTH ON and OFF.
+    announceAllGroups(enabled).catch(error => {
+      log('ERROR', 'Group notification failed', error);
+    });
 
     res.json({
       success: true,
       message: enabled
-        ? 'Group messaging is ON. Manny can now reply to group messages.'
-        : 'Group messaging is OFF. Manny will stop replying in groups.',
+        ? 'Group messaging is ON.'
+        : 'Group messaging is OFF.',
       status: getDashboardStatus()
     });
 
@@ -1832,7 +1811,6 @@ app.post('/api/send', adminAuth, async (req, res) => {
       String(message)
     );
 
-    // Dashboard manual messages reset the same timer.
     await markAdminActivity(account.id, [jid]);
 
     res.json({
@@ -1936,7 +1914,6 @@ async function startBot() {
     chatsCollection = db.collection('known_chats');
     accountsCollection = db.collection('whatsapp_accounts');
 
-    // Dedicated persistent private-chat activity collection.
     activityCollection = db.collection('private_chat_activity');
 
     await Promise.all([
