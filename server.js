@@ -1,4 +1,3 @@
-JavaScript
 
 require('dotenv').config();
 
