@@ -1,5 +1,3 @@
-
-
 require('dotenv').config();
 
 const express = require('express');
@@ -29,79 +27,79 @@ const config = {
 
   geminiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-  geminiBaseURL:
-    'https://generativelanguage.googleapis.com/v1beta/openai/',
+  geminiBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
 
   adminToken: process.env.ADMIN_CONTROL_TOKEN || '',
 
-  maxHistory: Math.max(
-    1,
-    Number(process.env.MAX_HISTORY_MESSAGES || 10)
-  ),
-
-  maxTokens: Math.min(
-    250,
-    Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))
-  ),
-
+  maxHistory: Math.max(1, Number(process.env.MAX_HISTORY_MESSAGES || 20)),
+  maxTokens: Math.min(250, Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))),
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
 
   announcementDelay: 500,
-
   privateChatCooldown: 3 * 60 * 1000,
 
   personality: `
-You are Manny, a multilingual WhatsApp assistant.
+You are Manny, a friendly, multilingual WhatsApp assistant.
 
 IDENTITY:
-- Your name is ALWAYS Manny.
-- If asked who you are, say "I'm Manny 😊".
-- If asked "We ni nani?", say "Mimi ni Manny 😊".
+- Your name is Manny.
+- NEVER introduce yourself or announce your name automatically.
+- NEVER say "I'm Manny", "Mimi ni Manny", or any equivalent unless the sender directly asks who you are, asks your name, or asks you to identify yourself.
+- Do not volunteer your identity in greetings, normal conversations, or replies.
+- If directly asked your name or identity, identify yourself as Manny in the language being used.
 - Never invent another name.
-- Never introduce yourself as a generic chatbot.
 
-LANGUAGE DETECTION:
-- Detect the language used in every incoming message.
-- Reply in the SAME language used by the sender.
-- English messages receive English replies.
-- Kiswahili messages receive Kiswahili replies.
-- Sheng messages receive natural Sheng replies.
-- Understand and respond to Gikuyu and other languages whenever capable.
-- Support as many languages and dialects as possible.
-- Understand mixed-language messages and reply in the dominant language.
-- Do not automatically translate everything into English.
-- Do not change languages unnecessarily.
+LANGUAGE MATCHING — VERY IMPORTANT:
+- Detect the language of every new incoming message.
+- Unless the sender has explicitly requested a language to be used, reply in the language of the latest incoming message.
+- English message = English reply only.
+- Kiswahili message = Kiswahili reply only.
+- Kenyan Sheng message = natural Kenyan Sheng reply.
+- Gikuyu message = Gikuyu reply whenever you can.
+- For any other language you understand, reply in that same language.
+- Support as many languages, dialects, regional expressions and writing systems as your model can handle.
+- Do not automatically translate messages.
+- Do not switch an English conversation into Kiswahili or a Kiswahili conversation into English.
+- Do not mix languages unnecessarily.
+- For mixed-language messages, reply in the dominant language and preserve natural local expressions.
+- For very short messages such as "Hi", use the language of that message or the latest explicit language preference. Do not assume Kiswahili merely because earlier messages were in Kiswahili.
 
-LANGUAGE REQUESTS:
-- If someone asks you to speak a particular language, obey.
-- Examples: Speak French, Use Kiswahili, Talk in English.
-- Continue using the requested language in that conversation.
-- Change language whenever the sender requests another language.
-- If someone requests translation, translate into the requested language.
+EXPLICIT LANGUAGE SWITCHING:
+- If the sender tells you to speak, use, change to, or switch to a particular language, obey.
+- Examples: "Speak French", "Use English", "Ongea Kiswahili", "Tumia Sheng", "Switch to Arabic".
+- An explicit language request overrides the language used in the instruction itself.
+- Continue using the requested language in that conversation until the sender requests another language.
+- If the sender says "switch back", use the language they clearly identify. If unclear, ask briefly.
+- A translation request is not automatically a permanent language change.
 - If the target language is unclear, ask which language they prefer.
+
+LANGUAGE ABILITY:
+- Understand and respond in as many world languages as possible, including African, European, Asian and other languages.
+- Recognize slang, abbreviations, dialects and informal writing whenever possible.
+- Understand Kenyan Sheng and regional expressions whenever possible.
+- Never pretend to understand a language if you genuinely cannot understand the message. Politely ask the sender to rephrase in a language you understand.
 
 PERSONALITY:
 - Friendly, confident, humorous and natural.
-- Talk like a normal Kenyan WhatsApp user when using English, Kiswahili or Sheng.
-- Be helpful and conversational.
-- Avoid robotic language.
+- Talk like a real person on WhatsApp.
+- Use Kenyan expressions naturally when appropriate, but do not force them into other languages.
+- Be helpful and conversational, never robotic.
 
-SHORT REPLIES:
-- Keep replies short and complete.
-- Normally use one sentence.
-- Maximum two short sentences when necessary.
+REPLY LENGTH:
+- Normally one short, complete sentence.
+- Use at most two short sentences when necessary.
 - Do not repeat the user's message.
 - Avoid unnecessary explanations.
 
 GENDER:
-- Never determine gender from a name alone.
-- Never assume gender from a profile name or writing style.
+- Never determine gender from a name, profile or writing style.
 - Use neutral wording when uncertain.
 
-IMPORTANT:
-- Always maintain Manny's identity.
-- Prioritize the sender's language preference.
-- Keep WhatsApp responses brief and natural.
+FINAL RULES:
+- The latest explicit language preference takes priority.
+- Otherwise, reply in the language of the latest incoming message.
+- Do not introduce yourself unless directly asked.
+- Never claim perfect knowledge of every language.
 `
 };
 
@@ -110,7 +108,6 @@ IMPORTANT:
 // =====================================================
 
 const app = express();
-
 app.use(express.json({ limit: '1mb' }));
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
@@ -162,10 +159,7 @@ const startedAt = new Date();
 
 function log(level, message, details) {
   const prefix = `[${new Date().toISOString()}] [${level}]`;
-
-  const method =
-    level === 'ERROR' ? 'error' :
-    level === 'WARN' ? 'warn' : 'log';
+  const method = level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : 'log';
 
   console[method](
     prefix,
@@ -519,7 +513,9 @@ async function markAdminActivity(accountId, aliases) {
             lastAdminMessageAt: now,
             updatedAt: now
           },
-          $setOnInsert: { createdAt: now }
+          $setOnInsert: {
+            createdAt: now
+          }
         },
         upsert: true
       }
@@ -590,42 +586,10 @@ function isBotMessageEcho(account, msg) {
 }
 
 // =====================================================
-// AI REPLIES
+// AI REPLIES - STRICT LANGUAGE MATCHING
 // =====================================================
 
-function normalizeMessage(message) {
-  return String(message || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[?!.,'"`]/g, '')
-    .replace(/\s+/g, ' ');
-}
-
-function identityReply(message) {
-  const text = normalizeMessage(message);
-
-  const patterns = [
-    /^who are you$/,
-    /^who is this$/,
-    /^what is your name$/,
-    /^whats your name$/,
-    /^we ni nani$/,
-    /^wewe ni nani$/,
-    /^unaitwa nani$/,
-    /^jina lako nani$/,
-    /^nani wewe$/
-  ];
-
-  return patterns.some(pattern => pattern.test(text))
-    ? 'Mimi ni Manny 😊'
-    : null;
-}
-
 async function generateReply(accountId, chatId, userMessage) {
-  const fixed = identityReply(userMessage);
-
-  if (fixed) return fixed;
-
   if (!aiClient) {
     return '⚠️ The service is temporarily unavailable.';
   }
@@ -642,10 +606,25 @@ async function generateReply(accountId, chatId, userMessage) {
           role: 'system',
           content: config.personality
         },
+
         ...history,
+
         {
           role: 'user',
-          content: userMessage
+          content: `
+LATEST MESSAGE:
+${userMessage}
+
+REPLY INSTRUCTION:
+First identify the language of this latest message.
+If the sender has explicitly requested a language in this conversation, follow their latest language request.
+Otherwise, reply in the language of this latest message.
+An English message MUST receive an English reply.
+A Kiswahili message MUST receive a Kiswahili reply.
+A Sheng message MUST receive a natural Sheng reply.
+Do not add a self-introduction or mention your name unless the sender directly asks who you are or what your name is.
+Reply naturally and briefly to the message above.
+`
         }
       ],
 
@@ -680,6 +659,7 @@ async function generateReply(accountId, chatId, userMessage) {
 
   } catch (error) {
     aiConnected = false;
+
     log('ERROR', 'Gemini reply failed', error);
 
     return '⚠️ Sorry, the service is temporarily unavailable. Try again shortly.';
@@ -760,7 +740,6 @@ async function announceAccount(account, enabled) {
   for (const chat of chats) {
     if (!account.connected || !account.sock) break;
 
-    // Private announcements must NEVER go to groups.
     if (!chat.jid || chat.jid.endsWith('@g.us')) continue;
 
     try {
@@ -818,6 +797,7 @@ async function getAllAccountGroups(account) {
     for (const jid of Object.keys(participatingGroups || {})) {
       if (jid.endsWith('@g.us')) groupJids.add(jid);
     }
+
   } catch (error) {
     log('WARN', 'Could not fetch participating groups', error);
   }
@@ -830,6 +810,7 @@ async function getAllAccountGroups(account) {
         groupJids.add(chat.jid);
       }
     }
+
   } catch (error) {
     log('WARN', 'Could not fetch saved groups', error);
   }
@@ -851,12 +832,12 @@ async function announceGroupMessagingAccount(account, enabled) {
   for (const groupJid of groups) {
     if (!account.connected || !account.sock) break;
 
-    // This function sends only to verified group JIDs.
     if (!groupJid.endsWith('@g.us')) continue;
 
     try {
       await sendText(account, groupJid, notice);
       sent++;
+
     } catch (error) {
       failed++;
 
@@ -951,7 +932,6 @@ async function processIncoming(account, msg) {
     msg.pushName || ''
   );
 
-  // Outgoing message: distinguish admin from Manny.
   if (msg.key.fromMe) {
     if (isGroup) return;
 
@@ -1002,14 +982,12 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
-  // Recheck settings before sending.
   if (!botPower) return;
 
   if (isGroup && !groupMessaging) return;
 
   if (!isGroup && account.manualTakeover) return;
 
-  // Check the private chat timer again after AI generation.
   if (!isGroup) {
     const coolingDown = await isPrivateChatCoolingDown(
       account.id,
@@ -1373,9 +1351,7 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
-    const wasEnabled = groupMessaging;
-
-    if (wasEnabled === enabled) {
+    if (groupMessaging === enabled) {
       return res.json({
         success: true,
         message: enabled
@@ -1391,7 +1367,6 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
 
     log('SUCCESS', 'Group messaging changed', { enabled });
 
-    // Announce to groups only.
     announceAllGroups(enabled).catch(error => {
       log('ERROR', 'Group announcement failed', error);
     });
@@ -1809,7 +1784,7 @@ async function startBot() {
             },
             {
               role: 'user',
-              content: 'What is your name?'
+              content: 'Reply with a short greeting in English. Do not introduce yourself.'
             }
           ],
           max_tokens: 30,
@@ -1828,6 +1803,7 @@ async function startBot() {
         aiConnected = false;
         log('ERROR', 'Gemini test failed', error);
       }
+
     } else {
       log('WARN', 'GEMINI_API_KEY is missing');
     }
