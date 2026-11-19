@@ -1,3 +1,5 @@
+
+
 require('dotenv').config();
 
 const express = require('express');
@@ -22,84 +24,178 @@ const {
 
 const config = {
   port: Number(process.env.PORT || 3000),
+
   mongoUri: process.env.MONGODB_URI,
+
   database: process.env.MONGODB_DB_NAME || 'whatsapp_bot',
 
   geminiKey: process.env.GEMINI_API_KEY,
+
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-  geminiBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+
+  geminiBaseURL:
+    'https://generativelanguage.googleapis.com/v1beta/openai/',
 
   adminToken: process.env.ADMIN_CONTROL_TOKEN || '',
 
-  maxHistory: Math.max(1, Number(process.env.MAX_HISTORY_MESSAGES || 20)),
-  maxTokens: Math.min(250, Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))),
+  maxHistory: Math.max(
+    1,
+    Number(process.env.MAX_HISTORY_MESSAGES || 10)
+  ),
+
+  maxTokens: Math.min(
+    250,
+    Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))
+  ),
+
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
 
   announcementDelay: 500,
+
   privateChatCooldown: 3 * 60 * 1000,
 
   personality: `
-You are Manny, a friendly, multilingual WhatsApp assistant.
+You are Manny, a highly multilingual WhatsApp assistant.
 
 IDENTITY:
 - Your name is Manny.
-- NEVER introduce yourself or announce your name automatically.
-- NEVER say "I'm Manny", "Mimi ni Manny", or any equivalent unless the sender directly asks who you are, asks your name, or asks you to identify yourself.
-- Do not volunteer your identity in greetings, normal conversations, or replies.
-- If directly asked your name or identity, identify yourself as Manny in the language being used.
-- Never invent another name.
+- Never introduce yourself automatically.
+- Never say "I am Manny" or "Mimi ni Manny" unless someone asks your name or identity.
+- When asked your name, answer naturally in the language required.
+- Never invent another identity.
+- Do not repeatedly introduce yourself.
 
-LANGUAGE MATCHING — VERY IMPORTANT:
-- Detect the language of every new incoming message.
-- Unless the sender has explicitly requested a language to be used, reply in the language of the latest incoming message.
-- English message = English reply only.
-- Kiswahili message = Kiswahili reply only.
-- Kenyan Sheng message = natural Kenyan Sheng reply.
-- Gikuyu message = Gikuyu reply whenever you can.
-- For any other language you understand, reply in that same language.
-- Support as many languages, dialects, regional expressions and writing systems as your model can handle.
-- Do not automatically translate messages.
-- Do not switch an English conversation into Kiswahili or a Kiswahili conversation into English.
-- Do not mix languages unnecessarily.
-- For mixed-language messages, reply in the dominant language and preserve natural local expressions.
-- For very short messages such as "Hi", use the language of that message or the latest explicit language preference. Do not assume Kiswahili merely because earlier messages were in Kiswahili.
+=====================================================
+STRICT LANGUAGE RULES
+=====================================================
 
-EXPLICIT LANGUAGE SWITCHING:
-- If the sender tells you to speak, use, change to, or switch to a particular language, obey.
-- Examples: "Speak French", "Use English", "Ongea Kiswahili", "Tumia Sheng", "Switch to Arabic".
-- An explicit language request overrides the language used in the instruction itself.
-- Continue using the requested language in that conversation until the sender requests another language.
-- If the sender says "switch back", use the language they clearly identify. If unclear, ask briefly.
-- A translation request is not automatically a permanent language change.
-- If the target language is unclear, ask which language they prefer.
+LANGUAGE CONSISTENCY IS YOUR HIGHEST PRIORITY.
 
-LANGUAGE ABILITY:
-- Understand and respond in as many world languages as possible, including African, European, Asian and other languages.
-- Recognize slang, abbreviations, dialects and informal writing whenever possible.
-- Understand Kenyan Sheng and regional expressions whenever possible.
-- Never pretend to understand a language if you genuinely cannot understand the message. Politely ask the sender to rephrase in a language you understand.
+Every incoming message must be treated as a separate language detection task.
 
-PERSONALITY:
-- Friendly, confident, humorous and natural.
-- Talk like a real person on WhatsApp.
-- Use Kenyan expressions naturally when appropriate, but do not force them into other languages.
-- Be helpful and conversational, never robotic.
+The language of the CURRENT incoming message determines
+the language of the reply.
 
-REPLY LENGTH:
-- Normally one short, complete sentence.
-- Use at most two short sentences when necessary.
-- Do not repeat the user's message.
+MANDATORY RULES:
+
+1. English message = English reply ONLY.
+2. Kiswahili message = Kiswahili reply.
+3. Sheng message = Natural Sheng or Kiswahili/Sheng.
+4. Gikuyu message = Gikuyu reply.
+5. Kamba message = Kamba reply.
+6. French message = French reply.
+7. German message = German reply.
+8. Arabic message = Arabic reply.
+9. Chinese message = Chinese reply.
+10. Other languages = Reply in the same language whenever supported.
+
+ABSOLUTE RESTRICTIONS:
+
+- NEVER reply to English in Kiswahili.
+- NEVER reply to English in Sheng.
+- NEVER reply to Kiswahili in English unless requested.
+- NEVER reply to French in English unless requested.
+- NEVER switch languages because previous messages used another language.
+- NEVER copy the language of an earlier assistant response.
+- NEVER allow conversation history to determine the current response language.
+- NEVER randomly mix languages.
+- NEVER translate automatically.
+- NEVER assume that everyone wants English.
+- NEVER assume that everyone wants Kiswahili.
+- NEVER use Sheng unless the incoming message is Sheng or Kiswahili/Sheng is explicitly requested.
+
+KISWAHILI AND SHENG:
+Kiswahili and Sheng are allowed to share natural responses.
+Do not confuse this permission with permission to use Kiswahili
+when someone is communicating in English.
+
+LANGUAGE SWITCHING:
+
+If someone explicitly requests another language, obey that request.
+
+Examples:
+- Speak English.
+- Switch to French.
+- Talk in Kiswahili.
+- Use Gikuyu.
+- Reply in Arabic.
+
+An explicit language request overrides the detected language
+for that response.
+
+For subsequent messages, detect their language again.
+Do not permanently force a language unless the sender
+explicitly requests an ongoing language preference.
+
+SHORT MESSAGES:
+
+For messages such as:
+Hi, Hello, Okay, Yes, No, Thanks, Good morning.
+
+Use the language indicated by the current message.
+Do not let conversation history override a clearly identifiable language.
+
+MIXED LANGUAGES:
+
+If a message contains multiple languages, identify the dominant
+language and respond in that language.
+
+If Kiswahili and Sheng are mixed, use natural Kiswahili/Sheng.
+
+UNSUPPORTED OR UNCERTAIN LANGUAGES:
+
+If you cannot confidently understand a language, politely ask
+for clarification using the most likely language.
+Never pretend to understand a language you do not understand.
+
+=====================================================
+PERSONALITY
+=====================================================
+
+- Friendly.
+- Confident.
+- Humorous when appropriate.
+- Natural.
+- Helpful.
+- Conversational.
+- Respectful.
+- Not robotic.
+
+Do not become unnecessarily defensive when insulted.
+Respond naturally to jokes, teasing and casual conversations.
+
+=====================================================
+RESPONSE LENGTH
+=====================================================
+
+- Normally one sentence.
+- Maximum two short sentences when necessary.
 - Avoid unnecessary explanations.
+- Do not repeat the user's message.
+- Avoid unnecessary greetings.
+- Answer the actual question.
 
-GENDER:
-- Never determine gender from a name, profile or writing style.
-- Use neutral wording when uncertain.
+=====================================================
+GENDER
+=====================================================
 
-FINAL RULES:
-- The latest explicit language preference takes priority.
-- Otherwise, reply in the language of the latest incoming message.
-- Do not introduce yourself unless directly asked.
-- Never claim perfect knowledge of every language.
+- Never assume someone's gender from a name.
+- Use neutral language when uncertain.
+
+=====================================================
+FINAL PRIORITY
+=====================================================
+
+Before every response:
+
+1. Identify the language of the current message.
+2. Check whether the sender explicitly requested another language.
+3. Select the correct response language.
+4. Generate the reply in that language only.
+5. Check that the reply does not randomly contain another language.
+
+The language used in previous messages MUST NOT override
+the language required for the current response.
 `
 };
 
@@ -108,6 +204,7 @@ FINAL RULES:
 // =====================================================
 
 const app = express();
+
 app.use(express.json({ limit: '1mb' }));
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
@@ -151,6 +248,7 @@ let accountAnnouncementRunning = false;
 let groupAnnouncementRunning = false;
 
 const accounts = new Map();
+
 const startedAt = new Date();
 
 // =====================================================
@@ -159,7 +257,10 @@ const startedAt = new Date();
 
 function log(level, message, details) {
   const prefix = `[${new Date().toISOString()}] [${level}]`;
-  const method = level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : 'log';
+
+  const method =
+    level === 'ERROR' ? 'error' :
+    level === 'WARN' ? 'warn' : 'log';
 
   console[method](
     prefix,
@@ -296,6 +397,7 @@ async function readAuth(accountId, id) {
 
 async function mongoAuthState(accountId) {
   const stored = await readAuth(accountId, 'creds');
+
   const creds = stored || initAuthCreds();
 
   const keys = {
@@ -318,6 +420,7 @@ async function mongoAuthState(accountId) {
       for (const category in data) {
         for (const id in data[category]) {
           const value = data[category][id];
+
           const documentId = `${category}-${id}`;
 
           if (value === null || value === undefined) {
@@ -513,9 +616,7 @@ async function markAdminActivity(accountId, aliases) {
             lastAdminMessageAt: now,
             updatedAt: now
           },
-          $setOnInsert: {
-            createdAt: now
-          }
+          $setOnInsert: { createdAt: now }
         },
         upsert: true
       }
@@ -586,50 +687,200 @@ function isBotMessageEcho(account, msg) {
 }
 
 // =====================================================
-// AI REPLIES - STRICT LANGUAGE MATCHING
+// LANGUAGE DETECTION
 // =====================================================
 
-async function generateReply(accountId, chatId, userMessage) {
+async function detectReplyLanguage(message) {
   if (!aiClient) {
-    return '⚠️ The service is temporarily unavailable.';
+    return 'the same language as the current incoming message';
   }
-
-  const key = `${accountId}:${chatId}`;
-  const history = historyCache.get(key) || [];
 
   try {
     const response = await aiClient.chat.completions.create({
+
       model: config.geminiModel,
 
       messages: [
         {
           role: 'system',
+
+          content: `
+You are an expert multilingual language detector.
+
+Analyze ONLY the current incoming WhatsApp message.
+
+Do not use conversation history.
+
+Identify the language that should be used to reply.
+
+IMPORTANT RULES:
+
+1. Detect the actual language of the message.
+2. English must be identified as English.
+3. Kiswahili must be identified as Kiswahili.
+4. Sheng must be identified as Sheng.
+5. Kiswahili and Sheng may share the response category:
+   Kiswahili/Sheng.
+6. Identify Gikuyu, Kamba, Dholuo, Somali and other
+   African languages where possible.
+7. Identify international languages.
+8. Detect mixed-language messages and select the dominant language.
+9. If the message explicitly requests another response language,
+   select that requested language instead.
+10. Very short ambiguous messages should use the most likely
+    language supported by the actual words.
+
+EXAMPLES:
+
+"Hello, how are you?" = English
+
+"How was your day?" = English
+
+"Habari yako?" = Kiswahili/Sheng
+
+"Niaje bro?" = Kiswahili/Sheng
+
+"Uvoo waku" = Kamba
+
+"Ũhoro waku?" = Gikuyu
+
+"Bonjour" = French
+
+"Wie geht es dir?" = German
+
+"Hola, cómo estás?" = Spanish
+
+"مرحبا" = Arabic
+
+"你好" = Chinese
+
+Return ONLY the language name.
+
+Do not explain your answer.
+`
+        },
+
+        {
+          role: 'user',
+          content: String(message)
+        }
+      ],
+
+      max_tokens: 25,
+      temperature: 0
+    });
+
+    const language = response.choices?.[0]?.message?.content
+      ?.trim()
+      .replace(/["'`]/g, '')
+      .replace(/[.!]+$/g, '');
+
+    if (!language || language.length > 60) {
+      throw new Error('Invalid language detection result');
+    }
+
+    log('INFO', 'Message language detected', {
+      language
+    });
+
+    return language;
+
+  } catch (error) {
+
+    log('WARN', 'Language detection failed', error);
+
+    return 'the same language as the current incoming message';
+  }
+}
+
+// =====================================================
+// LANGUAGE-LOCKED AI REPLIES
+// =====================================================
+
+async function generateReply(accountId, chatId, userMessage) {
+
+  if (!aiClient) {
+    return '⚠️ The service is temporarily unavailable.';
+  }
+
+  const key = `${accountId}:${chatId}`;
+
+  const history = historyCache.get(key) || [];
+
+  try {
+
+    // Detect the language of the current message only.
+    const replyLanguage = await detectReplyLanguage(userMessage);
+
+    const languageInstruction = `
+=====================================================
+MANDATORY LANGUAGE LOCK
+=====================================================
+
+REQUIRED RESPONSE LANGUAGE: ${replyLanguage}
+
+This instruction has the highest priority.
+
+You MUST respond entirely in ${replyLanguage}.
+
+The CURRENT incoming message determines the language.
+
+STRICT RESTRICTIONS:
+
+- If required language is English, use English ONLY.
+- If required language is Kiswahili/Sheng, use Kiswahili/Sheng.
+- Never answer an English message in Kiswahili.
+- Never answer an English message in Sheng.
+- Never answer a Kiswahili message in English unless requested.
+- Never change language because of conversation history.
+- Never copy the language of previous assistant messages.
+- Never randomly mix languages.
+- Do not automatically translate.
+- Do not introduce yourself.
+- Only mention Manny when asked about your identity.
+
+Conversation history is provided ONLY for understanding
+the meaning and context of the conversation.
+
+It MUST NOT influence the language of this response.
+
+If the current incoming message explicitly requests
+a different response language, follow that request.
+
+Before sending your response, check that the entire
+response follows the required language.
+
+Return only the natural WhatsApp reply.
+`;
+
+    const response = await aiClient.chat.completions.create({
+
+      model: config.geminiModel,
+
+      messages: [
+
+        {
+          role: 'system',
           content: config.personality
+        },
+
+        {
+          role: 'system',
+          content: languageInstruction
         },
 
         ...history,
 
         {
           role: 'user',
-          content: `
-LATEST MESSAGE:
-${userMessage}
-
-REPLY INSTRUCTION:
-First identify the language of this latest message.
-If the sender has explicitly requested a language in this conversation, follow their latest language request.
-Otherwise, reply in the language of this latest message.
-An English message MUST receive an English reply.
-A Kiswahili message MUST receive a Kiswahili reply.
-A Sheng message MUST receive a natural Sheng reply.
-Do not add a self-introduction or mention your name unless the sender directly asks who you are or what your name is.
-Reply naturally and briefly to the message above.
-`
+          content: userMessage
         }
+
       ],
 
       max_tokens: config.maxTokens,
       temperature: config.temperature
+
     });
 
     let reply =
@@ -643,9 +894,18 @@ Reply naturally and briefly to the message above.
       reply = reply.slice(0, 497).trim() + '...';
     }
 
+    // Save conversation context.
+    // Do not save the detected language as a permanent setting.
+
     history.push(
-      { role: 'user', content: userMessage },
-      { role: 'assistant', content: reply }
+      {
+        role: 'user',
+        content: userMessage
+      },
+      {
+        role: 'assistant',
+        content: reply
+      }
     );
 
     historyCache.set(
@@ -655,14 +915,21 @@ Reply naturally and briefly to the message above.
 
     aiConnected = true;
 
+    log('SUCCESS', 'Language-locked reply generated', {
+      account: accountId,
+      language: replyLanguage
+    });
+
     return reply;
 
   } catch (error) {
+
     aiConnected = false;
 
     log('ERROR', 'Gemini reply failed', error);
 
     return '⚠️ Sorry, the service is temporarily unavailable. Try again shortly.';
+
   }
 }
 
@@ -694,9 +961,11 @@ async function sendText(account, jid, text, quoted) {
   const options = quoted ? { quoted } : {};
 
   const count = account.botSendingJids.get(jid) || 0;
+
   account.botSendingJids.set(jid, count + 1);
 
   try {
+
     const result = await account.sock.sendMessage(
       jid,
       { text: outgoingText },
@@ -710,6 +979,7 @@ async function sendText(account, jid, text, quoted) {
     return result;
 
   } finally {
+
     const remaining =
       (account.botSendingJids.get(jid) || 1) - 1;
 
@@ -735,14 +1005,17 @@ async function announceAccount(account, enabled) {
   if (!account.connected || !account.sock) return;
 
   const chats = await getKnownChats(account.id);
+
   const notice = announcementText(enabled);
 
   for (const chat of chats) {
+
     if (!account.connected || !account.sock) break;
 
     if (!chat.jid || chat.jid.endsWith('@g.us')) continue;
 
     try {
+
       await sendText(account, chat.jid, notice);
 
       await new Promise(resolve =>
@@ -750,6 +1023,7 @@ async function announceAccount(account, enabled) {
       );
 
     } catch (error) {
+
       log('WARN', 'Private announcement failed', {
         account: account.id,
         chat: maskJid(chat.jid),
@@ -765,12 +1039,15 @@ async function announceAllAccounts(enabled) {
   accountAnnouncementRunning = true;
 
   try {
+
     for (const account of accounts.values()) {
       if (account.connected) {
         await announceAccount(account, enabled);
       }
     }
+
   } finally {
+
     accountAnnouncementRunning = false;
   }
 }
@@ -791,18 +1068,23 @@ async function getAllAccountGroups(account) {
   const groupJids = new Set();
 
   try {
+
     const participatingGroups =
       await account.sock.groupFetchAllParticipating();
 
     for (const jid of Object.keys(participatingGroups || {})) {
-      if (jid.endsWith('@g.us')) groupJids.add(jid);
+      if (jid.endsWith('@g.us')) {
+        groupJids.add(jid);
+      }
     }
 
   } catch (error) {
+
     log('WARN', 'Could not fetch participating groups', error);
   }
 
   try {
+
     const savedChats = await getKnownChats(account.id);
 
     for (const chat of savedChats) {
@@ -812,6 +1094,7 @@ async function getAllAccountGroups(account) {
     }
 
   } catch (error) {
+
     log('WARN', 'Could not fetch saved groups', error);
   }
 
@@ -820,25 +1103,34 @@ async function getAllAccountGroups(account) {
 
 async function announceGroupMessagingAccount(account, enabled) {
   if (!account.connected || !account.sock) {
-    return { account: account.id, sent: 0, failed: 0 };
+    return {
+      account: account.id,
+      sent: 0,
+      failed: 0
+    };
   }
 
   const groups = await getAllAccountGroups(account);
+
   const notice = groupMessagingAnnouncementText(enabled);
 
   let sent = 0;
   let failed = 0;
 
   for (const groupJid of groups) {
+
     if (!account.connected || !account.sock) break;
 
     if (!groupJid.endsWith('@g.us')) continue;
 
     try {
+
       await sendText(account, groupJid, notice);
+
       sent++;
 
     } catch (error) {
+
       failed++;
 
       log('WARN', 'Group notification failed', {
@@ -867,6 +1159,7 @@ async function announceAllGroups(enabled) {
   groupAnnouncementRunning = true;
 
   try {
+
     const results = [];
 
     for (const account of accounts.values()) {
@@ -880,9 +1173,11 @@ async function announceAllGroups(enabled) {
     log('SUCCESS', 'Group announcements processed', results);
 
   } catch (error) {
+
     log('ERROR', 'Group announcement process failed', error);
 
   } finally {
+
     groupAnnouncementRunning = false;
   }
 }
@@ -932,7 +1227,9 @@ async function processIncoming(account, msg) {
     msg.pushName || ''
   );
 
+  // Handle outgoing messages.
   if (msg.key.fromMe) {
+
     if (isGroup) return;
 
     if (isBotMessageEcho(account, msg)) return;
@@ -958,6 +1255,7 @@ async function processIncoming(account, msg) {
   const aliases = isGroup ? [] : getPrivateAliases(msg);
 
   if (!isGroup) {
+
     const coolingDown = await isPrivateChatCoolingDown(
       account.id,
       aliases.length ? aliases : [jid]
@@ -982,19 +1280,23 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
+  // Recheck settings before sending.
   if (!botPower) return;
 
   if (isGroup && !groupMessaging) return;
 
   if (!isGroup && account.manualTakeover) return;
 
+  // Recheck private chat cooldown.
   if (!isGroup) {
+
     const coolingDown = await isPrivateChatCoolingDown(
       account.id,
       aliases.length ? aliases : [jid]
     );
 
     if (coolingDown) {
+
       log('INFO', 'Reply cancelled: admin recently messaged', {
         account: account.id,
         chat: maskJid(jid)
@@ -1005,6 +1307,7 @@ async function processIncoming(account, msg) {
   }
 
   if (account.connected) {
+
     await sendText(account, jid, reply, msg);
 
     log('SUCCESS', 'Reply sent', {
@@ -1022,8 +1325,11 @@ function scheduleReconnect(account, delay = 5000) {
   if (shuttingDown || account.reconnectTimer) return;
 
   account.reconnectTimer = setTimeout(() => {
+
     account.reconnectTimer = null;
+
     connectAccount(account.id);
+
   }, delay);
 }
 
@@ -1039,11 +1345,13 @@ async function connectAccount(accountId) {
   if (account.connected || account.connecting) return;
 
   account.connecting = true;
+
   account.state = 'connecting';
 
   const generation = ++account.generation;
 
   try {
+
     const { state, saveCreds } =
       await mongoAuthState(accountId);
 
@@ -1053,28 +1361,43 @@ async function connectAccount(accountId) {
     ) return;
 
     const socket = makeWASocket({
+
       auth: state,
+
       logger,
+
       printQRInTerminal: false,
+
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
+
       markOnlineOnConnect: true,
+
       syncFullHistory: false,
+
       connectTimeoutMs: 60000,
+
       defaultQueryTimeoutMs: 60000,
+
       keepAliveIntervalMs: 25000
+
     });
 
     account.sock = socket;
 
     socket.ev.on('creds.update', async () => {
+
       try {
+
         await saveCreds();
+
       } catch (error) {
+
         log('ERROR', 'Credential save failed', error);
       }
     });
 
     socket.ev.on('connection.update', async update => {
+
       if (generation !== account.generation) return;
 
       const {
@@ -1084,7 +1407,9 @@ async function connectAccount(accountId) {
       } = update;
 
       if (qr) {
+
         try {
+
           account.qr = await QRCode.toDataURL(qr, {
             width: 400,
             margin: 2
@@ -1093,17 +1418,23 @@ async function connectAccount(accountId) {
           account.state = 'qr_ready';
 
         } catch (error) {
+
           log('ERROR', 'QR generation failed', error);
         }
       }
 
       if (connection === 'open') {
+
         account.connected = true;
+
         account.connecting = false;
+
         account.state = 'open';
 
         account.qr = null;
+
         account.pairingCode = null;
+
         account.reconnectAttempts = 0;
 
         log('SUCCESS', 'WhatsApp account connected', {
@@ -1113,11 +1444,15 @@ async function connectAccount(accountId) {
       }
 
       if (connection === 'close') {
+
         account.connected = false;
+
         account.connecting = false;
+
         account.state = 'disconnected';
 
         account.sock = null;
+
         account.qr = null;
 
         const statusCode =
@@ -1129,6 +1464,7 @@ async function connectAccount(accountId) {
         });
 
         if (statusCode === DisconnectReason.loggedOut) {
+
           account.state = 'needs_pairing';
 
           await authCollection.deleteMany({ accountId });
@@ -1148,10 +1484,15 @@ async function connectAccount(accountId) {
     });
 
     socket.ev.on('messages.upsert', async event => {
+
       for (const msg of event.messages || []) {
+
         try {
+
           await processIncoming(account, msg);
+
         } catch (error) {
+
           log('ERROR', 'Message processing failed', {
             account: account.id,
             error: error.message
@@ -1165,8 +1506,11 @@ async function connectAccount(accountId) {
     log('SUCCESS', 'Account socket created', account.id);
 
   } catch (error) {
+
     account.connecting = false;
+
     account.sock = null;
+
     account.state = 'reconnecting';
 
     log('ERROR', 'Account startup failed', {
@@ -1186,12 +1530,16 @@ async function waitForAccountSocket(account, timeout = 20000) {
   const started = Date.now();
 
   while (Date.now() - started < timeout) {
+
     if (account.connected) {
       throw new Error('Account is already connected.');
     }
 
     if (account.sock) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      await new Promise(resolve =>
+        setTimeout(resolve, 1500)
+      );
 
       if (account.sock) return account.sock;
     }
@@ -1200,7 +1548,9 @@ async function waitForAccountSocket(account, timeout = 20000) {
       await connectAccount(account.id);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve =>
+      setTimeout(resolve, 300)
+    );
   }
 
   throw new Error(
@@ -1225,23 +1575,33 @@ async function disconnectAccount(accountId) {
   }
 
   account.connected = false;
+
   account.connecting = false;
+
   account.state = 'disconnected';
 
   const socket = account.sock;
+
   account.sock = null;
 
   if (socket) {
+
     try {
+
       socket.end(undefined);
+
     } catch (error) {
+
       log('WARN', 'Socket close warning', error);
     }
   }
 
   await authCollection.deleteMany({ accountId });
+
   await chatsCollection.deleteMany({ accountId });
+
   await activityCollection.deleteMany({ accountId });
+
   await accountsCollection.deleteOne({ _id: accountId });
 
   accounts.delete(accountId);
@@ -1276,8 +1636,11 @@ function getDashboardStatus() {
     aiConfigured: !!aiClient,
     mongoConnected,
     privateChatCooldownMinutes: 3,
+
     accounts: [...accounts.values()].map(publicAccount),
+
     uptimeSeconds: Math.floor(process.uptime()),
+
     startedAt: startedAt.toISOString()
   };
 }
@@ -1295,7 +1658,9 @@ app.get('/api/status', adminAuth, (req, res) => {
 // =====================================================
 
 app.post('/api/bot-power', adminAuth, async (req, res) => {
+
   try {
+
     const enabled = req.body?.enabled;
 
     if (typeof enabled !== 'boolean') {
@@ -1305,6 +1670,7 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
     }
 
     if (botPower === enabled) {
+
       return res.json({
         success: true,
         message: 'Bot power already has this setting.',
@@ -1319,16 +1685,21 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
     log('SUCCESS', 'Bot power changed', { enabled });
 
     announceAllAccounts(enabled).catch(error => {
+
       log('ERROR', 'Private announcement process failed', error);
+
     });
 
     res.json({
       success: true,
+
       message: enabled ? 'Bot turned ON.' : 'Bot turned OFF.',
+
       status: getDashboardStatus()
     });
 
   } catch (error) {
+
     log('ERROR', 'Bot power update failed', error);
 
     res.status(500).json({
@@ -1342,7 +1713,9 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
 // =====================================================
 
 app.post('/api/group-messaging', adminAuth, async (req, res) => {
+
   try {
+
     const enabled = req.body?.enabled;
 
     if (typeof enabled !== 'boolean') {
@@ -1351,12 +1724,17 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
-    if (groupMessaging === enabled) {
+    const wasEnabled = groupMessaging;
+
+    if (wasEnabled === enabled) {
+
       return res.json({
         success: true,
+
         message: enabled
           ? 'Group messaging is already enabled.'
           : 'Group messaging is already disabled.',
+
         status: getDashboardStatus()
       });
     }
@@ -1368,18 +1746,23 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     log('SUCCESS', 'Group messaging changed', { enabled });
 
     announceAllGroups(enabled).catch(error => {
+
       log('ERROR', 'Group announcement failed', error);
+
     });
 
     res.json({
       success: true,
+
       message: enabled
         ? 'Group messaging is ON.'
         : 'Group messaging is OFF.',
+
       status: getDashboardStatus()
     });
 
   } catch (error) {
+
     log('ERROR', 'Group messaging update failed', error);
 
     res.status(500).json({
@@ -1393,7 +1776,9 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
 // =====================================================
 
 app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
+
   try {
+
     const id = String(req.params.id || '');
 
     if (!validAccountId(id)) {
@@ -1440,14 +1825,18 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
 
     return res.json({
       success: true,
+
       message: enabled
         ? `Manual takeover ON for ${account.label}.`
         : `Manual takeover OFF for ${account.label}.`,
+
       account: publicAccount(account),
+
       status: getDashboardStatus()
     });
 
   } catch (error) {
+
     log('ERROR', 'Manual takeover update failed', error);
 
     return res.status(500).json({
@@ -1462,7 +1851,9 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
 // =====================================================
 
 app.post('/api/accounts', adminAuth, async (req, res) => {
+
   try {
+
     const label = String(
       req.body?.label || ''
     ).trim().slice(0, 40);
@@ -1481,11 +1872,14 @@ app.post('/api/accounts', adminAuth, async (req, res) => {
 
     res.json({
       success: true,
+
       account: publicAccount(account),
+
       message: 'New account created. Waiting for pairing.'
     });
 
   } catch (error) {
+
     log('ERROR', 'Account creation failed', error);
 
     res.status(500).json({
@@ -1499,7 +1893,9 @@ app.post('/api/accounts', adminAuth, async (req, res) => {
 // =====================================================
 
 app.post('/api/accounts/:id/connect', adminAuth, async (req, res) => {
+
   try {
+
     const account = accounts.get(req.params.id);
 
     if (!account) {
@@ -1526,11 +1922,14 @@ app.post('/api/accounts/:id/connect', adminAuth, async (req, res) => {
 
     return res.json({
       success: true,
+
       message: 'WhatsApp connection started.',
+
       account: publicAccount(account)
     });
 
   } catch (error) {
+
     log('ERROR', 'Account reconnect failed', error);
 
     return res.status(500).json({
@@ -1544,7 +1943,9 @@ app.post('/api/accounts/:id/connect', adminAuth, async (req, res) => {
 // =====================================================
 
 app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
+
   try {
+
     const account = accounts.get(req.params.id);
 
     if (!account) {
@@ -1583,11 +1984,14 @@ app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
 
     return res.json({
       success: true,
+
       code,
+
       message: 'Pairing code generated successfully.'
     });
 
   } catch (error) {
+
     log('ERROR', 'Pairing code request failed', error);
 
     return res.status(500).json({
@@ -1601,7 +2005,9 @@ app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
 // =====================================================
 
 app.delete('/api/accounts/:id', adminAuth, async (req, res) => {
+
   try {
+
     const id = req.params.id;
 
     if (!validAccountId(id)) {
@@ -1614,10 +2020,12 @@ app.delete('/api/accounts/:id', adminAuth, async (req, res) => {
 
     res.json({
       success: true,
+
       message: 'WhatsApp account disconnected and removed.'
     });
 
   } catch (error) {
+
     log('ERROR', 'Account disconnection failed', error);
 
     res.status(500).json({
@@ -1631,7 +2039,9 @@ app.delete('/api/accounts/:id', adminAuth, async (req, res) => {
 // =====================================================
 
 app.post('/api/send', adminAuth, async (req, res) => {
+
   try {
+
     const { accountId, to, message } = req.body || {};
 
     const account = accounts.get(accountId);
@@ -1658,10 +2068,12 @@ app.post('/api/send', adminAuth, async (req, res) => {
 
     res.json({
       success: true,
+
       message: 'Message sent. Three-minute timer started.'
     });
 
   } catch (error) {
+
     log('ERROR', 'Manual message failed', error);
 
     res.status(500).json({
@@ -1675,18 +2087,29 @@ app.post('/api/send', adminAuth, async (req, res) => {
 // =====================================================
 
 app.get('/health', (req, res) => {
+
   res.json({
+
     status: 'ok',
+
     mongoConnected,
+
     aiConnected,
+
     botPower,
+
     groupMessaging,
+
     privateChatCooldownMinutes: 3,
+
     accounts: accounts.size,
+
     connectedAccounts: [...accounts.values()].filter(
       account => account.connected
     ).length,
+
     uptimeSeconds: Math.floor(process.uptime())
+
   });
 });
 
@@ -1695,7 +2118,9 @@ app.get('/health', (req, res) => {
 // =====================================================
 
 app.get('/', (req, res) => {
+
   res.sendFile(path.join(__dirname, 'index.html'));
+
 });
 
 // =====================================================
@@ -1703,9 +2128,11 @@ app.get('/', (req, res) => {
 // =====================================================
 
 app.use((req, res) => {
+
   res.status(404).json({
     error: 'Route not found.'
   });
+
 });
 
 // =====================================================
@@ -1713,6 +2140,7 @@ app.use((req, res) => {
 // =====================================================
 
 app.use((error, req, res, next) => {
+
   log('ERROR', 'HTTP error', error);
 
   if (res.headersSent) return next(error);
@@ -1720,6 +2148,7 @@ app.use((error, req, res, next) => {
   res.status(500).json({
     error: 'Internal server error.'
   });
+
 });
 
 // =====================================================
@@ -1730,7 +2159,9 @@ const server = app.listen(
   config.port,
   '0.0.0.0',
   () => {
+
     log('SUCCESS', 'HTTP server listening', config.port);
+
   }
 );
 
@@ -1739,7 +2170,9 @@ const server = app.listen(
 // =====================================================
 
 async function startBot() {
+
   try {
+
     if (!config.mongoUri) {
       throw new Error('MONGODB_URI is missing.');
     }
@@ -1751,44 +2184,64 @@ async function startBot() {
     const db = mongoClient.db(config.database);
 
     authCollection = db.collection('whatsapp_auth');
+
     settingsCollection = db.collection('bot_settings');
+
     chatsCollection = db.collection('known_chats');
+
     accountsCollection = db.collection('whatsapp_accounts');
+
     activityCollection = db.collection('private_chat_activity');
 
     await Promise.all([
+
       authCollection.createIndex({ accountId: 1 }),
+
       chatsCollection.createIndex({ accountId: 1 }),
+
       accountsCollection.createIndex({ _id: 1 }),
+
       activityCollection.createIndex({
         accountId: 1,
         jid: 1
       })
+
     ]);
 
     mongoConnected = true;
 
     await loadSettings();
+
     await loadAccounts();
 
     log('SUCCESS', 'MongoDB connected');
 
     if (aiClient) {
+
       try {
+
         const test = await aiClient.chat.completions.create({
+
           model: config.geminiModel,
+
           messages: [
+
             {
               role: 'system',
               content: config.personality
             },
+
             {
               role: 'user',
-              content: 'Reply with a short greeting in English. Do not introduce yourself.'
+              content: 'What is your name?'
             }
+
           ],
+
           max_tokens: 30,
+
           temperature: 0
+
         });
 
         aiConnected = !!test.choices?.[0]?.message?.content;
@@ -1800,12 +2253,17 @@ async function startBot() {
         );
 
       } catch (error) {
+
         aiConnected = false;
+
         log('ERROR', 'Gemini test failed', error);
+
       }
 
     } else {
+
       log('WARN', 'GEMINI_API_KEY is missing');
+
     }
 
     for (const account of accounts.values()) {
@@ -1815,8 +2273,11 @@ async function startBot() {
     log('SUCCESS', 'Startup completed');
 
   } catch (error) {
+
     mongoConnected = false;
+
     log('ERROR', 'Startup failed', error);
+
   }
 }
 
@@ -1827,6 +2288,7 @@ startBot();
 // =====================================================
 
 async function shutdown(signal) {
+
   if (shuttingDown) return;
 
   shuttingDown = true;
@@ -1834,18 +2296,24 @@ async function shutdown(signal) {
   log('WARN', 'Shutdown started', signal);
 
   for (const account of accounts.values()) {
+
     if (account.reconnectTimer) {
       clearTimeout(account.reconnectTimer);
     }
 
     if (account.sock) {
+
       try {
+
         account.sock.end(undefined);
+
       } catch {}
+
     }
   }
 
   try {
+
     if (mongoConnected) {
       await mongoClient.close();
     }
@@ -1857,19 +2325,28 @@ async function shutdown(signal) {
     setTimeout(() => process.exit(0), 8000).unref();
 
   } catch (error) {
+
     log('ERROR', 'Shutdown failed', error);
+
     process.exit(1);
+
   }
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 process.on('unhandledRejection', error => {
+
   log('ERROR', 'Unhandled rejection', error);
+
 });
 
 process.on('uncaughtException', error => {
+
   log('ERROR', 'Uncaught exception', error);
+
   process.exit(1);
+
 });
