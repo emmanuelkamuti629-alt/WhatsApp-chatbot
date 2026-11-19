@@ -29,28 +29,60 @@ const config = {
 
   geminiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-  geminiBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  geminiBaseURL:
+    'https://generativelanguage.googleapis.com/v1beta/openai/',
 
   adminToken: process.env.ADMIN_CONTROL_TOKEN || '',
 
-  maxHistory: Math.max(1, Number(process.env.MAX_HISTORY_MESSAGES || 10)),
-  maxTokens: Math.min(250, Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))),
+  maxHistory: Math.max(
+    1,
+    Number(process.env.MAX_HISTORY_MESSAGES || 10)
+  ),
+
+  maxTokens: Math.min(
+    250,
+    Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))
+  ),
+
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
 
-  announcementDelay: 350,
+  announcementDelay: 500,
+
   privateChatCooldown: 3 * 60 * 1000,
 
   personality: `
-You are Manny. Your name is ALWAYS Manny.
+You are Manny, a multilingual WhatsApp assistant.
 
 IDENTITY:
+- Your name is ALWAYS Manny.
 - If asked who you are, say "I'm Manny 😊".
 - If asked "We ni nani?", say "Mimi ni Manny 😊".
 - Never invent another name.
+- Never introduce yourself as a generic chatbot.
+
+LANGUAGE DETECTION:
+- Detect the language used in every incoming message.
+- Reply in the SAME language used by the sender.
+- English messages receive English replies.
+- Kiswahili messages receive Kiswahili replies.
+- Sheng messages receive natural Sheng replies.
+- Understand and respond to Gikuyu and other languages whenever capable.
+- Support as many languages and dialects as possible.
+- Understand mixed-language messages and reply in the dominant language.
+- Do not automatically translate everything into English.
+- Do not change languages unnecessarily.
+
+LANGUAGE REQUESTS:
+- If someone asks you to speak a particular language, obey.
+- Examples: Speak French, Use Kiswahili, Talk in English.
+- Continue using the requested language in that conversation.
+- Change language whenever the sender requests another language.
+- If someone requests translation, translate into the requested language.
+- If the target language is unclear, ask which language they prefer.
 
 PERSONALITY:
 - Friendly, confident, humorous and natural.
-- Talk like a normal Kenyan WhatsApp user.
+- Talk like a normal Kenyan WhatsApp user when using English, Kiswahili or Sheng.
 - Be helpful and conversational.
 - Avoid robotic language.
 
@@ -59,20 +91,17 @@ SHORT REPLIES:
 - Normally use one sentence.
 - Maximum two short sentences when necessary.
 - Do not repeat the user's message.
+- Avoid unnecessary explanations.
 
-LANGUAGES:
-- Understand English, Kiswahili, Kenyan Sheng and common Gikuyu expressions.
-- Respond naturally in the language used by the sender.
-- Understand mixed English, Swahili and Sheng.
-
-GENDER RULES:
+GENDER:
 - Never determine gender from a name alone.
 - Never assume gender from a profile name or writing style.
-- If uncertain, use the person's name or neutral wording.
+- Use neutral wording when uncertain.
 
 IMPORTANT:
-Always maintain Manny's identity.
-Keep WhatsApp responses brief and natural.
+- Always maintain Manny's identity.
+- Prioritize the sender's language preference.
+- Keep WhatsApp responses brief and natural.
 `
 };
 
@@ -81,6 +110,7 @@ Keep WhatsApp responses brief and natural.
 // =====================================================
 
 const app = express();
+
 app.use(express.json({ limit: '1mb' }));
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
@@ -132,7 +162,9 @@ const startedAt = new Date();
 
 function log(level, message, details) {
   const prefix = `[${new Date().toISOString()}] [${level}]`;
-  const method = level === 'ERROR' ? 'error' :
+
+  const method =
+    level === 'ERROR' ? 'error' :
     level === 'WARN' ? 'warn' : 'log';
 
   console[method](
@@ -351,6 +383,7 @@ function createAccountRecord(id, label, manualTakeover = false) {
   };
 
   accounts.set(id, account);
+
   return account;
 }
 
@@ -434,7 +467,7 @@ async function getKnownChats(accountId) {
 }
 
 // =====================================================
-// PRIVATE CHAT IDENTITY MATCHING
+// PRIVATE CHAT ACTIVITY
 // =====================================================
 
 function getPrivateAliases(msg) {
@@ -452,17 +485,13 @@ function getPrivateAliases(msg) {
   return [...new Set(
     candidates
       .filter(Boolean)
-      .map(value => String(value).trim())
+      .map(String)
       .filter(value =>
         value.endsWith('@s.whatsapp.net') ||
         value.endsWith('@lid')
       )
   )];
 }
-
-// =====================================================
-// PRIVATE CHAT ADMIN ACTIVITY
-// =====================================================
 
 async function markAdminActivity(accountId, aliases) {
   const validAliases = [...new Set(
@@ -479,31 +508,24 @@ async function markAdminActivity(accountId, aliases) {
 
   const now = new Date();
 
-  const operations = validAliases.map(jid => ({
-    updateOne: {
-      filter: { _id: `${accountId}:${jid}` },
-      update: {
-        $set: {
-          accountId,
-          jid,
-          lastAdminMessageAt: now,
-          updatedAt: now
-        },
-        $setOnInsert: { createdAt: now }
-      },
-      upsert: true
-    }
-  }));
-
   await activityCollection.bulkWrite(
-    operations,
+    validAliases.map(jid => ({
+      updateOne: {
+        filter: { _id: `${accountId}:${jid}` },
+        update: {
+          $set: {
+            accountId,
+            jid,
+            lastAdminMessageAt: now,
+            updatedAt: now
+          },
+          $setOnInsert: { createdAt: now }
+        },
+        upsert: true
+      }
+    })),
     { ordered: false }
   );
-
-  log('INFO', 'Admin activity recorded', {
-    account: accountId,
-    aliases: validAliases.map(maskJid)
-  });
 }
 
 async function isPrivateChatCoolingDown(accountId, aliases) {
@@ -552,9 +574,11 @@ function rememberBotMessage(account, jid, messageId) {
 
 function isBotMessageEcho(account, msg) {
   const id = msg?.key?.id;
+
   if (!id) return false;
 
   const stored = account.botSentIds.get(String(id));
+
   if (!stored) return false;
 
   if (stored.expiresAt < Date.now()) {
@@ -599,6 +623,7 @@ function identityReply(message) {
 
 async function generateReply(accountId, chatId, userMessage) {
   const fixed = identityReply(userMessage);
+
   if (fixed) return fixed;
 
   if (!aiClient) {
@@ -611,11 +636,19 @@ async function generateReply(accountId, chatId, userMessage) {
   try {
     const response = await aiClient.chat.completions.create({
       model: config.geminiModel,
+
       messages: [
-        { role: 'system', content: config.personality },
+        {
+          role: 'system',
+          content: config.personality
+        },
         ...history,
-        { role: 'user', content: userMessage }
+        {
+          role: 'user',
+          content: userMessage
+        }
       ],
+
       max_tokens: config.maxTokens,
       temperature: config.temperature
     });
@@ -642,6 +675,7 @@ async function generateReply(accountId, chatId, userMessage) {
     );
 
     aiConnected = true;
+
     return reply;
 
   } catch (error) {
@@ -678,8 +712,8 @@ async function sendText(account, jid, text, quoted) {
     : String(text || '').trim();
 
   const options = quoted ? { quoted } : {};
-  const count = account.botSendingJids.get(jid) || 0;
 
+  const count = account.botSendingJids.get(jid) || 0;
   account.botSendingJids.set(jid, count + 1);
 
   try {
@@ -708,40 +742,32 @@ async function sendText(account, jid, text, quoted) {
 }
 
 // =====================================================
-// PRIVATE ON/OFF ANNOUNCEMENTS
-// These notifications are PRIVATE ONLY.
-// Never send them to groups.
+// PRIVATE ACCOUNT ANNOUNCEMENTS
 // =====================================================
 
-function privateAnnouncementText(enabled) {
+function announcementText(enabled) {
   return enabled
-    ? '⚠️.bot*\nBot enabled'
-    : '⚠️.bot*\nBot off';
+    ? '⚠️.bot*\nEnabled'
+    : '⚠️.bot*\nOff';
 }
 
-async function announcePrivateAccount(account, enabled) {
+async function announceAccount(account, enabled) {
   if (!account.connected || !account.sock) return;
 
   const chats = await getKnownChats(account.id);
-  const notice = privateAnnouncementText(enabled);
+  const notice = announcementText(enabled);
 
   for (const chat of chats) {
     if (!account.connected || !account.sock) break;
 
-    // STRICTLY EXCLUDE GROUPS.
+    // Private announcements must NEVER go to groups.
     if (!chat.jid || chat.jid.endsWith('@g.us')) continue;
-
-    // Only private WhatsApp chats.
-    if (
-      !chat.jid.endsWith('@s.whatsapp.net') &&
-      !chat.jid.endsWith('@lid')
-    ) continue;
 
     try {
       await sendText(account, chat.jid, notice);
 
       await new Promise(resolve =>
-        setTimeout(resolve, config.announcementDelay)
+        setTimeout(resolve, 350)
       );
 
     } catch (error) {
@@ -754,7 +780,7 @@ async function announcePrivateAccount(account, enabled) {
   }
 }
 
-async function announceAllPrivateAccounts(enabled) {
+async function announceAllAccounts(enabled) {
   if (accountAnnouncementRunning) return;
 
   accountAnnouncementRunning = true;
@@ -762,7 +788,7 @@ async function announceAllPrivateAccounts(enabled) {
   try {
     for (const account of accounts.values()) {
       if (account.connected) {
-        await announcePrivateAccount(account, enabled);
+        await announceAccount(account, enabled);
       }
     }
   } finally {
@@ -772,14 +798,12 @@ async function announceAllPrivateAccounts(enabled) {
 
 // =====================================================
 // GROUP ANNOUNCEMENTS
-// These notifications are GROUP ONLY.
-// They are sent when Group Messaging is switched ON/OFF.
 // =====================================================
 
 function groupMessagingAnnouncementText(enabled) {
   return enabled
-    ? '⚠️.bot*\nBot enabled'
-    : '⚠️.bot*\nBot off';
+    ? '⚠️.bot*\nEnabled'
+    : '⚠️.bot*\nOff';
 }
 
 async function getAllAccountGroups(account) {
@@ -792,9 +816,7 @@ async function getAllAccountGroups(account) {
       await account.sock.groupFetchAllParticipating();
 
     for (const jid of Object.keys(participatingGroups || {})) {
-      if (jid.endsWith('@g.us')) {
-        groupJids.add(jid);
-      }
+      if (jid.endsWith('@g.us')) groupJids.add(jid);
     }
   } catch (error) {
     log('WARN', 'Could not fetch participating groups', error);
@@ -817,11 +839,7 @@ async function getAllAccountGroups(account) {
 
 async function announceGroupMessagingAccount(account, enabled) {
   if (!account.connected || !account.sock) {
-    return {
-      account: account.id,
-      sent: 0,
-      failed: 0
-    };
+    return { account: account.id, sent: 0, failed: 0 };
   }
 
   const groups = await getAllAccountGroups(account);
@@ -833,8 +851,9 @@ async function announceGroupMessagingAccount(account, enabled) {
   for (const groupJid of groups) {
     if (!account.connected || !account.sock) break;
 
-    // Deliberately do NOT check groupMessaging here.
-    // OFF notifications must also be delivered.
+    // This function sends only to verified group JIDs.
+    if (!groupJid.endsWith('@g.us')) continue;
+
     try {
       await sendText(account, groupJid, notice);
       sent++;
@@ -908,13 +927,14 @@ function extractText(message) {
 }
 
 // =====================================================
-// PROCESS INCOMING WHATSAPP MESSAGE
+// PROCESS WHATSAPP MESSAGE
 // =====================================================
 
 async function processIncoming(account, msg) {
   if (!msg || !msg.key) return;
 
   const jid = msg.key.remoteJid;
+
   if (!jid) return;
 
   if (
@@ -931,17 +951,13 @@ async function processIncoming(account, msg) {
     msg.pushName || ''
   );
 
-  // OUTGOING MESSAGE: ADMIN OR MANNY?
+  // Outgoing message: distinguish admin from Manny.
   if (msg.key.fromMe) {
     if (isGroup) return;
 
-    if (isBotMessageEcho(account, msg)) {
-      return;
-    }
+    if (isBotMessageEcho(account, msg)) return;
 
-    if (account.botSendingJids.has(jid)) {
-      return;
-    }
+    if (account.botSendingJids.has(jid)) return;
 
     const aliases = getPrivateAliases(msg);
 
@@ -953,16 +969,12 @@ async function processIncoming(account, msg) {
     return;
   }
 
-  // MAIN BOT SWITCH
   if (!botPower) return;
 
-  // GROUP SWITCH
   if (isGroup && !groupMessaging) return;
 
-  // PRIVATE MANUAL TAKEOVER
   if (!isGroup && account.manualTakeover) return;
 
-  // PRIVATE CHAT COOLDOWN
   const aliases = isGroup ? [] : getPrivateAliases(msg);
 
   if (!isGroup) {
@@ -975,6 +987,7 @@ async function processIncoming(account, msg) {
   }
 
   const userMessage = extractText(msg.message);
+
   if (!userMessage) return;
 
   log('INFO', 'Incoming message', {
@@ -989,12 +1002,14 @@ async function processIncoming(account, msg) {
     userMessage
   );
 
-  // Recheck switches before sending.
+  // Recheck settings before sending.
   if (!botPower) return;
+
   if (isGroup && !groupMessaging) return;
+
   if (!isGroup && account.manualTakeover) return;
 
-  // Recheck private timer after AI generation.
+  // Check the private chat timer again after AI generation.
   if (!isGroup) {
     const coolingDown = await isPrivateChatCoolingDown(
       account.id,
@@ -1002,7 +1017,7 @@ async function processIncoming(account, msg) {
     );
 
     if (coolingDown) {
-      log('INFO', 'AI reply cancelled: admin is active', {
+      log('INFO', 'Reply cancelled: admin recently messaged', {
         account: account.id,
         chat: maskJid(jid)
       });
@@ -1042,6 +1057,7 @@ async function connectAccount(accountId) {
   const account = accounts.get(accountId);
 
   if (!account || shuttingDown) return;
+
   if (account.connected || account.connecting) return;
 
   account.connecting = true;
@@ -1083,7 +1099,11 @@ async function connectAccount(accountId) {
     socket.ev.on('connection.update', async update => {
       if (generation !== account.generation) return;
 
-      const { connection, lastDisconnect, qr } = update;
+      const {
+        connection,
+        lastDisconnect,
+        qr
+      } = update;
 
       if (qr) {
         try {
@@ -1093,6 +1113,7 @@ async function connectAccount(accountId) {
           });
 
           account.state = 'qr_ready';
+
         } catch (error) {
           log('ERROR', 'QR generation failed', error);
         }
@@ -1132,9 +1153,7 @@ async function connectAccount(accountId) {
         if (statusCode === DisconnectReason.loggedOut) {
           account.state = 'needs_pairing';
 
-          await authCollection.deleteMany({
-            accountId
-          });
+          await authCollection.deleteMany({ accountId });
 
           return;
         }
@@ -1250,6 +1269,7 @@ async function disconnectAccount(accountId) {
   accounts.delete(accountId);
 
   log('SUCCESS', 'Account disconnected and removed', accountId);
+
   return true;
 }
 
@@ -1294,7 +1314,6 @@ app.get('/api/status', adminAuth, (req, res) => {
 
 // =====================================================
 // API: BOT POWER
-// Private notifications only.
 // =====================================================
 
 app.post('/api/bot-power', adminAuth, async (req, res) => {
@@ -1316,11 +1335,12 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
     }
 
     botPower = enabled;
+
     await saveSettings();
 
     log('SUCCESS', 'Bot power changed', { enabled });
 
-    announceAllPrivateAccounts(enabled).catch(error => {
+    announceAllAccounts(enabled).catch(error => {
       log('ERROR', 'Private announcement process failed', error);
     });
 
@@ -1341,7 +1361,6 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
 
 // =====================================================
 // API: GROUP MESSAGING
-// Group notifications only.
 // =====================================================
 
 app.post('/api/group-messaging', adminAuth, async (req, res) => {
@@ -1367,11 +1386,12 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     }
 
     groupMessaging = enabled;
+
     await saveSettings();
 
     log('SUCCESS', 'Group messaging changed', { enabled });
 
-    // Send the matching ON or OFF notification to groups only.
+    // Announce to groups only.
     announceAllGroups(enabled).catch(error => {
       log('ERROR', 'Group announcement failed', error);
     });
@@ -1379,8 +1399,8 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     res.json({
       success: true,
       message: enabled
-        ? 'Group messaging is ON. Group notifications are being sent.'
-        : 'Group messaging is OFF. Group notifications are being sent.',
+        ? 'Group messaging is ON.'
+        : 'Group messaging is OFF.',
       status: getDashboardStatus()
     });
 
@@ -1436,24 +1456,18 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
           manualTakeover: enabled,
           label: account.label,
           updatedAt: new Date()
-        },
-        $setOnInsert: { createdAt: new Date() }
+        }
       },
       { upsert: true }
     );
 
     account.manualTakeover = enabled;
 
-    log('SUCCESS', 'Manual takeover saved', {
-      account: account.id,
-      enabled
-    });
-
     return res.json({
       success: true,
       message: enabled
-        ? `Manual takeover ON for ${account.label}. Private replies paused.`
-        : `Manual takeover OFF for ${account.label}. Private replies resumed.`,
+        ? `Manual takeover ON for ${account.label}.`
+        : `Manual takeover OFF for ${account.label}.`,
       account: publicAccount(account),
       status: getDashboardStatus()
     });
@@ -1487,6 +1501,7 @@ app.post('/api/accounts', adminAuth, async (req, res) => {
     );
 
     await saveAccountRecord(account);
+
     connectAccount(id);
 
     res.json({
@@ -1588,12 +1603,8 @@ app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
     }
 
     const code = await socket.requestPairingCode(phone);
-    account.pairingCode = code;
 
-    log('SUCCESS', 'Pairing code generated', {
-      account: account.id,
-      phone: maskJid(`${phone}@s.whatsapp.net`)
-    });
+    account.pairingCode = code;
 
     return res.json({
       success: true,
@@ -1667,6 +1678,7 @@ app.post('/api/send', adminAuth, async (req, res) => {
     const jid = `${phone}@s.whatsapp.net`;
 
     await sendText(account, jid, String(message));
+
     await markAdminActivity(account.id, [jid]);
 
     res.json({
@@ -1842,6 +1854,7 @@ async function shutdown(signal) {
   if (shuttingDown) return;
 
   shuttingDown = true;
+
   log('WARN', 'Shutdown started', signal);
 
   for (const account of accounts.values()) {
