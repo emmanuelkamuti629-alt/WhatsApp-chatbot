@@ -1,4 +1,5 @@
 
+
 require('dotenv').config();
 
 const express = require('express');
@@ -28,26 +29,15 @@ const config = {
 
   geminiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-  geminiBaseURL:
-    'https://generativelanguage.googleapis.com/v1beta/openai/',
+  geminiBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
 
   adminToken: process.env.ADMIN_CONTROL_TOKEN || '',
 
-  maxHistory: Math.max(
-    1,
-    Number(process.env.MAX_HISTORY_MESSAGES || 10)
-  ),
-
-  maxTokens: Math.min(
-    250,
-    Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))
-  ),
-
+  maxHistory: Math.max(1, Number(process.env.MAX_HISTORY_MESSAGES || 10)),
+  maxTokens: Math.min(250, Math.max(80, Number(process.env.OPENAI_MAX_TOKENS || 180))),
   temperature: Number(process.env.OPENAI_TEMPERATURE || 0.7),
 
   announcementDelay: 350,
-
-  // Three minutes after the admin's last private message.
   privateChatCooldown: 3 * 60 * 1000,
 
   personality: `
@@ -57,7 +47,6 @@ IDENTITY:
 - If asked who you are, say "I'm Manny 😊".
 - If asked "We ni nani?", say "Mimi ni Manny 😊".
 - Never invent another name.
-- Never introduce yourself as a generic chatbot.
 
 PERSONALITY:
 - Friendly, confident, humorous and natural.
@@ -70,7 +59,6 @@ SHORT REPLIES:
 - Normally use one sentence.
 - Maximum two short sentences when necessary.
 - Do not repeat the user's message.
-- Avoid unnecessary explanations.
 
 LANGUAGES:
 - Understand English, Kiswahili, Kenyan Sheng and common Gikuyu expressions.
@@ -79,10 +67,8 @@ LANGUAGES:
 
 GENDER RULES:
 - Never determine gender from a name alone.
-- Never assume gender from a profile name, nickname or writing style.
-- Only use he/him or she/her when the person has clearly confirmed their gender.
+- Never assume gender from a profile name or writing style.
 - If uncertain, use the person's name or neutral wording.
-- Never guess someone's gender.
 
 IMPORTANT:
 Always maintain Manny's identity.
@@ -95,7 +81,6 @@ Keep WhatsApp responses brief and natural.
 // =====================================================
 
 const app = express();
-
 app.use(express.json({ limit: '1mb' }));
 
 const mongoClient = new MongoClient(config.mongoUri || '', {
@@ -136,6 +121,7 @@ let botPower = true;
 let groupMessaging = false;
 
 let accountAnnouncementRunning = false;
+let groupAnnouncementRunning = false;
 
 const accounts = new Map();
 const startedAt = new Date();
@@ -146,9 +132,7 @@ const startedAt = new Date();
 
 function log(level, message, details) {
   const prefix = `[${new Date().toISOString()}] [${level}]`;
-
-  const method =
-    level === 'ERROR' ? 'error' :
+  const method = level === 'ERROR' ? 'error' :
     level === 'WARN' ? 'warn' : 'log';
 
   console[method](
@@ -187,17 +171,6 @@ function maskJid(jid) {
 
 function validAccountId(id) {
   return /^[a-zA-Z0-9_-]{1,40}$/.test(String(id || ''));
-}
-
-function isGroupJid(jid) {
-  return String(jid || '').endsWith('@g.us');
-}
-
-function isPrivateJid(jid) {
-  return (
-    String(jid || '').endsWith('@s.whatsapp.net') ||
-    String(jid || '').endsWith('@lid')
-  );
 }
 
 // =====================================================
@@ -378,15 +351,10 @@ function createAccountRecord(id, label, manualTakeover = false) {
   };
 
   accounts.set(id, account);
-
   return account;
 }
 
 async function saveAccountRecord(account) {
-  if (!accountsCollection) {
-    throw new Error('MongoDB account collection is not ready.');
-  }
-
   await accountsCollection.updateOne(
     { _id: account.id },
     {
@@ -462,9 +430,7 @@ async function rememberChat(accountId, jid, name = '') {
 }
 
 async function getKnownChats(accountId) {
-  return chatsCollection.find({
-    accountId
-  }).toArray();
+  return chatsCollection.find({ accountId }).toArray();
 }
 
 // =====================================================
@@ -487,7 +453,10 @@ function getPrivateAliases(msg) {
     candidates
       .filter(Boolean)
       .map(value => String(value).trim())
-      .filter(isPrivateJid)
+      .filter(value =>
+        value.endsWith('@s.whatsapp.net') ||
+        value.endsWith('@lid')
+      )
   )];
 }
 
@@ -500,7 +469,10 @@ async function markAdminActivity(accountId, aliases) {
     (Array.isArray(aliases) ? aliases : [aliases])
       .filter(Boolean)
       .map(String)
-      .filter(isPrivateJid)
+      .filter(jid =>
+        jid.endsWith('@s.whatsapp.net') ||
+        jid.endsWith('@lid')
+      )
   )];
 
   if (!validAliases.length) return;
@@ -509,9 +481,7 @@ async function markAdminActivity(accountId, aliases) {
 
   const operations = validAliases.map(jid => ({
     updateOne: {
-      filter: {
-        _id: `${accountId}:${jid}`
-      },
+      filter: { _id: `${accountId}:${jid}` },
       update: {
         $set: {
           accountId,
@@ -519,9 +489,7 @@ async function markAdminActivity(accountId, aliases) {
           lastAdminMessageAt: now,
           updatedAt: now
         },
-        $setOnInsert: {
-          createdAt: now
-        }
+        $setOnInsert: { createdAt: now }
       },
       upsert: true
     }
@@ -532,23 +500,17 @@ async function markAdminActivity(accountId, aliases) {
     { ordered: false }
   );
 
-  log('INFO', 'ADMIN ACTIVITY RECORDED - TIMER RESET', {
+  log('INFO', 'Admin activity recorded', {
     account: accountId,
-    aliases: validAliases.map(maskJid),
-    cooldownMinutes: 3
+    aliases: validAliases.map(maskJid)
   });
 }
-
-// =====================================================
-// CHECK ADMIN INACTIVITY
-// =====================================================
 
 async function isPrivateChatCoolingDown(accountId, aliases) {
   const validAliases = [...new Set(
     (Array.isArray(aliases) ? aliases : [aliases])
       .filter(Boolean)
       .map(String)
-      .filter(isPrivateJid)
   )];
 
   if (!validAliases.length) return false;
@@ -566,23 +528,7 @@ async function isPrivateChatCoolingDown(accountId, aliases) {
     )
   );
 
-  const elapsed = Date.now() - latestActivity;
-
-  if (elapsed < config.privateChatCooldown) {
-    const remaining = Math.ceil(
-      (config.privateChatCooldown - elapsed) / 1000
-    );
-
-    log('INFO', 'PRIVATE CHAT PAUSED', {
-      account: accountId,
-      remainingSeconds: remaining,
-      aliases: validAliases.map(maskJid)
-    });
-
-    return true;
-  }
-
-  return false;
+  return Date.now() - latestActivity < config.privateChatCooldown;
 }
 
 // =====================================================
@@ -606,11 +552,9 @@ function rememberBotMessage(account, jid, messageId) {
 
 function isBotMessageEcho(account, msg) {
   const id = msg?.key?.id;
-
   if (!id) return false;
 
   const stored = account.botSentIds.get(String(id));
-
   if (!stored) return false;
 
   if (stored.expiresAt < Date.now()) {
@@ -655,7 +599,6 @@ function identityReply(message) {
 
 async function generateReply(accountId, chatId, userMessage) {
   const fixed = identityReply(userMessage);
-
   if (fixed) return fixed;
 
   if (!aiClient) {
@@ -669,15 +612,9 @@ async function generateReply(accountId, chatId, userMessage) {
     const response = await aiClient.chat.completions.create({
       model: config.geminiModel,
       messages: [
-        {
-          role: 'system',
-          content: config.personality
-        },
+        { role: 'system', content: config.personality },
         ...history,
-        {
-          role: 'user',
-          content: userMessage
-        }
+        { role: 'user', content: userMessage }
       ],
       max_tokens: config.maxTokens,
       temperature: config.temperature
@@ -705,12 +642,10 @@ async function generateReply(accountId, chatId, userMessage) {
     );
 
     aiConnected = true;
-
     return reply;
 
   } catch (error) {
     aiConnected = false;
-
     log('ERROR', 'Gemini reply failed', error);
 
     return '⚠️ Sorry, the service is temporarily unavailable. Try again shortly.';
@@ -736,14 +671,13 @@ async function sendText(account, jid, text, quoted) {
     throw new Error(`Account ${account.id} is disconnected`);
   }
 
-  const isGroup = isGroupJid(jid);
+  const isGroup = String(jid || '').endsWith('@g.us');
 
   const outgoingText = isGroup
     ? formatBotMessage(text)
     : String(text || '').trim();
 
   const options = quoted ? { quoted } : {};
-
   const count = account.botSendingJids.get(jid) || 0;
 
   account.botSendingJids.set(jid, count + 1);
@@ -756,11 +690,7 @@ async function sendText(account, jid, text, quoted) {
     );
 
     if (result?.key?.id) {
-      rememberBotMessage(
-        account,
-        jid,
-        result.key.id
-      );
+      rememberBotMessage(account, jid, result.key.id);
     }
 
     return result;
@@ -778,42 +708,34 @@ async function sendText(account, jid, text, quoted) {
 }
 
 // =====================================================
-// SHORT NOTIFICATIONS
+// PRIVATE ON/OFF ANNOUNCEMENTS
+// These notifications are PRIVATE ONLY.
+// Never send them to groups.
 // =====================================================
 
-function announcementText(enabled) {
+function privateAnnouncementText(enabled) {
   return enabled
-    ? '⚠️.bot*\nEnabled'
-    : '⚠️.bot*\nOff';
+    ? '⚠️.bot*\nBot enabled'
+    : '⚠️.bot*\nBot off';
 }
 
-// =====================================================
-// PRIVATE-ONLY BOT POWER ANNOUNCEMENTS
-// =====================================================
-
-// IMPORTANT:
-// This function deliberately excludes every group.
-// It only sends status notifications to private chats.
-
-async function announceAccount(account, enabled) {
+async function announcePrivateAccount(account, enabled) {
   if (!account.connected || !account.sock) return;
 
   const chats = await getKnownChats(account.id);
+  const notice = privateAnnouncementText(enabled);
 
-  const privateChats = chats.filter(chat =>
-    isPrivateJid(chat.jid) &&
-    !isGroupJid(chat.jid)
-  );
-
-  const notice = announcementText(enabled);
-
-  for (const chat of privateChats) {
+  for (const chat of chats) {
     if (!account.connected || !account.sock) break;
 
-    // Final safety check: never send a status notice to a group.
-    if (!isPrivateJid(chat.jid) || isGroupJid(chat.jid)) {
-      continue;
-    }
+    // STRICTLY EXCLUDE GROUPS.
+    if (!chat.jid || chat.jid.endsWith('@g.us')) continue;
+
+    // Only private WhatsApp chats.
+    if (
+      !chat.jid.endsWith('@s.whatsapp.net') &&
+      !chat.jid.endsWith('@lid')
+    ) continue;
 
     try {
       await sendText(account, chat.jid, notice);
@@ -823,7 +745,7 @@ async function announceAccount(account, enabled) {
       );
 
     } catch (error) {
-      log('WARN', 'Private notification failed', {
+      log('WARN', 'Private announcement failed', {
         account: account.id,
         chat: maskJid(chat.jid),
         error: error.message
@@ -832,7 +754,7 @@ async function announceAccount(account, enabled) {
   }
 }
 
-async function announceAllAccounts(enabled) {
+async function announceAllPrivateAccounts(enabled) {
   if (accountAnnouncementRunning) return;
 
   accountAnnouncementRunning = true;
@@ -840,11 +762,128 @@ async function announceAllAccounts(enabled) {
   try {
     for (const account of accounts.values()) {
       if (account.connected) {
-        await announceAccount(account, enabled);
+        await announcePrivateAccount(account, enabled);
       }
     }
   } finally {
     accountAnnouncementRunning = false;
+  }
+}
+
+// =====================================================
+// GROUP ANNOUNCEMENTS
+// These notifications are GROUP ONLY.
+// They are sent when Group Messaging is switched ON/OFF.
+// =====================================================
+
+function groupMessagingAnnouncementText(enabled) {
+  return enabled
+    ? '⚠️.bot*\nBot enabled'
+    : '⚠️.bot*\nBot off';
+}
+
+async function getAllAccountGroups(account) {
+  if (!account.sock || !account.connected) return [];
+
+  const groupJids = new Set();
+
+  try {
+    const participatingGroups =
+      await account.sock.groupFetchAllParticipating();
+
+    for (const jid of Object.keys(participatingGroups || {})) {
+      if (jid.endsWith('@g.us')) {
+        groupJids.add(jid);
+      }
+    }
+  } catch (error) {
+    log('WARN', 'Could not fetch participating groups', error);
+  }
+
+  try {
+    const savedChats = await getKnownChats(account.id);
+
+    for (const chat of savedChats) {
+      if (chat.jid && chat.jid.endsWith('@g.us')) {
+        groupJids.add(chat.jid);
+      }
+    }
+  } catch (error) {
+    log('WARN', 'Could not fetch saved groups', error);
+  }
+
+  return [...groupJids];
+}
+
+async function announceGroupMessagingAccount(account, enabled) {
+  if (!account.connected || !account.sock) {
+    return {
+      account: account.id,
+      sent: 0,
+      failed: 0
+    };
+  }
+
+  const groups = await getAllAccountGroups(account);
+  const notice = groupMessagingAnnouncementText(enabled);
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const groupJid of groups) {
+    if (!account.connected || !account.sock) break;
+
+    // Deliberately do NOT check groupMessaging here.
+    // OFF notifications must also be delivered.
+    try {
+      await sendText(account, groupJid, notice);
+      sent++;
+    } catch (error) {
+      failed++;
+
+      log('WARN', 'Group notification failed', {
+        account: account.id,
+        group: maskJid(groupJid),
+        error: error.message
+      });
+    }
+
+    await new Promise(resolve =>
+      setTimeout(resolve, config.announcementDelay)
+    );
+  }
+
+  return {
+    account: account.id,
+    totalGroups: groups.length,
+    sent,
+    failed
+  };
+}
+
+async function announceAllGroups(enabled) {
+  if (groupAnnouncementRunning) return;
+
+  groupAnnouncementRunning = true;
+
+  try {
+    const results = [];
+
+    for (const account of accounts.values()) {
+      if (account.connected) {
+        results.push(
+          await announceGroupMessagingAccount(account, enabled)
+        );
+      }
+    }
+
+    log('SUCCESS', 'Group announcements processed', results);
+
+  } catch (error) {
+    log('ERROR', 'Group announcement process failed', error);
+
+  } finally {
+    groupAnnouncementRunning = false;
   }
 }
 
@@ -876,7 +915,6 @@ async function processIncoming(account, msg) {
   if (!msg || !msg.key) return;
 
   const jid = msg.key.remoteJid;
-
   if (!jid) return;
 
   if (
@@ -885,7 +923,7 @@ async function processIncoming(account, msg) {
     jid.endsWith('@broadcast')
   ) return;
 
-  const isGroup = isGroupJid(jid);
+  const isGroup = jid.endsWith('@g.us');
 
   await rememberChat(
     account.id,
@@ -893,19 +931,11 @@ async function processIncoming(account, msg) {
     msg.pushName || ''
   );
 
-  // ===================================================
   // OUTGOING MESSAGE: ADMIN OR MANNY?
-  // ===================================================
-
   if (msg.key.fromMe) {
     if (isGroup) return;
 
     if (isBotMessageEcho(account, msg)) {
-      log('INFO', 'Manny outgoing echo ignored', {
-        account: account.id,
-        chat: maskJid(jid)
-      });
-
       return;
     }
 
@@ -923,38 +953,17 @@ async function processIncoming(account, msg) {
     return;
   }
 
-  // ===================================================
   // MAIN BOT SWITCH
-  // ===================================================
-
   if (!botPower) return;
 
-  // ===================================================
   // GROUP SWITCH
-  // ===================================================
-
   if (isGroup && !groupMessaging) return;
 
-  // ===================================================
   // PRIVATE MANUAL TAKEOVER
-  // ===================================================
+  if (!isGroup && account.manualTakeover) return;
 
-  if (!isGroup && account.manualTakeover) {
-    log('INFO', 'Manual takeover active', {
-      account: account.id,
-      chat: maskJid(jid)
-    });
-
-    return;
-  }
-
-  // ===================================================
-  // PRIVATE CHAT TIMER
-  // ===================================================
-
-  const aliases = isGroup
-    ? []
-    : getPrivateAliases(msg);
+  // PRIVATE CHAT COOLDOWN
+  const aliases = isGroup ? [] : getPrivateAliases(msg);
 
   if (!isGroup) {
     const coolingDown = await isPrivateChatCoolingDown(
@@ -965,12 +974,7 @@ async function processIncoming(account, msg) {
     if (coolingDown) return;
   }
 
-  // ===================================================
-  // MESSAGE EXTRACTION
-  // ===================================================
-
   const userMessage = extractText(msg.message);
-
   if (!userMessage) return;
 
   log('INFO', 'Incoming message', {
@@ -979,30 +983,18 @@ async function processIncoming(account, msg) {
     group: isGroup
   });
 
-  // ===================================================
-  // GENERATE AI REPLY
-  // ===================================================
-
   const reply = await generateReply(
     account.id,
     jid,
     userMessage
   );
 
-  // ===================================================
-  // RECHECK SETTINGS
-  // ===================================================
-
+  // Recheck switches before sending.
   if (!botPower) return;
-
   if (isGroup && !groupMessaging) return;
-
   if (!isGroup && account.manualTakeover) return;
 
-  // ===================================================
-  // CHECK TIMER AGAIN BEFORE SENDING
-  // ===================================================
-
+  // Recheck private timer after AI generation.
   if (!isGroup) {
     const coolingDown = await isPrivateChatCoolingDown(
       account.id,
@@ -1010,7 +1002,7 @@ async function processIncoming(account, msg) {
     );
 
     if (coolingDown) {
-      log('INFO', 'AI REPLY CANCELLED: ADMIN IS ACTIVE', {
+      log('INFO', 'AI reply cancelled: admin is active', {
         account: account.id,
         chat: maskJid(jid)
       });
@@ -1018,10 +1010,6 @@ async function processIncoming(account, msg) {
       return;
     }
   }
-
-  // ===================================================
-  // SEND REPLY
-  // ===================================================
 
   if (account.connected) {
     await sendText(account, jid, reply, msg);
@@ -1054,7 +1042,6 @@ async function connectAccount(accountId) {
   const account = accounts.get(accountId);
 
   if (!account || shuttingDown) return;
-
   if (account.connected || account.connecting) return;
 
   account.connecting = true;
@@ -1063,10 +1050,8 @@ async function connectAccount(accountId) {
   const generation = ++account.generation;
 
   try {
-    const {
-      state,
-      saveCreds
-    } = await mongoAuthState(accountId);
+    const { state, saveCreds } =
+      await mongoAuthState(accountId);
 
     if (
       generation !== account.generation ||
@@ -1098,11 +1083,7 @@ async function connectAccount(accountId) {
     socket.ev.on('connection.update', async update => {
       if (generation !== account.generation) return;
 
-      const {
-        connection,
-        lastDisconnect,
-        qr
-      } = update;
+      const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
         try {
@@ -1112,7 +1093,6 @@ async function connectAccount(accountId) {
           });
 
           account.state = 'qr_ready';
-
         } catch (error) {
           log('ERROR', 'QR generation failed', error);
         }
@@ -1270,7 +1250,6 @@ async function disconnectAccount(accountId) {
   accounts.delete(accountId);
 
   log('SUCCESS', 'Account disconnected and removed', accountId);
-
   return true;
 }
 
@@ -1298,11 +1277,8 @@ function getDashboardStatus() {
     aiConnected,
     aiConfigured: !!aiClient,
     mongoConnected,
-
     privateChatCooldownMinutes: 3,
-
     accounts: [...accounts.values()].map(publicAccount),
-
     uptimeSeconds: Math.floor(process.uptime()),
     startedAt: startedAt.toISOString()
   };
@@ -1318,6 +1294,7 @@ app.get('/api/status', adminAuth, (req, res) => {
 
 // =====================================================
 // API: BOT POWER
+// Private notifications only.
 // =====================================================
 
 app.post('/api/bot-power', adminAuth, async (req, res) => {
@@ -1339,22 +1316,17 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
     }
 
     botPower = enabled;
-
     await saveSettings();
 
     log('SUCCESS', 'Bot power changed', { enabled });
 
-    // Notifications go to private chats only.
-    // announceAccount explicitly excludes all groups.
-    announceAllAccounts(enabled).catch(error => {
-      log('ERROR', 'Private notification process failed', error);
+    announceAllPrivateAccounts(enabled).catch(error => {
+      log('ERROR', 'Private announcement process failed', error);
     });
 
     res.json({
       success: true,
-      message: enabled
-        ? 'Bot turned ON.'
-        : 'Bot turned OFF. Admin is back.',
+      message: enabled ? 'Bot turned ON.' : 'Bot turned OFF.',
       status: getDashboardStatus()
     });
 
@@ -1369,6 +1341,7 @@ app.post('/api/bot-power', adminAuth, async (req, res) => {
 
 // =====================================================
 // API: GROUP MESSAGING
+// Group notifications only.
 // =====================================================
 
 app.post('/api/group-messaging', adminAuth, async (req, res) => {
@@ -1381,7 +1354,9 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
       });
     }
 
-    if (groupMessaging === enabled) {
+    const wasEnabled = groupMessaging;
+
+    if (wasEnabled === enabled) {
       return res.json({
         success: true,
         message: enabled
@@ -1392,20 +1367,20 @@ app.post('/api/group-messaging', adminAuth, async (req, res) => {
     }
 
     groupMessaging = enabled;
-
     await saveSettings();
 
     log('SUCCESS', 'Group messaging changed', { enabled });
 
-    // IMPORTANT:
-    // No WhatsApp notification or announcement is sent
-    // when group messaging is enabled or disabled.
+    // Send the matching ON or OFF notification to groups only.
+    announceAllGroups(enabled).catch(error => {
+      log('ERROR', 'Group announcement failed', error);
+    });
 
     res.json({
       success: true,
       message: enabled
-        ? 'Group messaging enabled.'
-        : 'Group messaging disabled.',
+        ? 'Group messaging is ON. Group notifications are being sent.'
+        : 'Group messaging is OFF. Group notifications are being sent.',
       status: getDashboardStatus()
     });
 
@@ -1462,9 +1437,7 @@ app.post('/api/accounts/:id/takeover', adminAuth, async (req, res) => {
           label: account.label,
           updatedAt: new Date()
         },
-        $setOnInsert: {
-          createdAt: new Date()
-        }
+        $setOnInsert: { createdAt: new Date() }
       },
       { upsert: true }
     );
@@ -1514,7 +1487,6 @@ app.post('/api/accounts', adminAuth, async (req, res) => {
     );
 
     await saveAccountRecord(account);
-
     connectAccount(id);
 
     res.json({
@@ -1616,7 +1588,6 @@ app.post('/api/accounts/:id/pair', adminAuth, async (req, res) => {
     }
 
     const code = await socket.requestPairingCode(phone);
-
     account.pairingCode = code;
 
     log('SUCCESS', 'Pairing code generated', {
@@ -1695,12 +1666,7 @@ app.post('/api/send', adminAuth, async (req, res) => {
 
     const jid = `${phone}@s.whatsapp.net`;
 
-    await sendText(
-      account,
-      jid,
-      String(message)
-    );
-
+    await sendText(account, jid, String(message));
     await markAdminActivity(account.id, [jid]);
 
     res.json({
@@ -1742,9 +1708,7 @@ app.get('/health', (req, res) => {
 // =====================================================
 
 app.get('/', (req, res) => {
-  res.sendFile(
-    path.join(__dirname, 'index.html')
-  );
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // =====================================================
@@ -1803,7 +1767,6 @@ async function startBot() {
     settingsCollection = db.collection('bot_settings');
     chatsCollection = db.collection('known_chats');
     accountsCollection = db.collection('whatsapp_accounts');
-
     activityCollection = db.collection('private_chat_activity');
 
     await Promise.all([
@@ -1879,7 +1842,6 @@ async function shutdown(signal) {
   if (shuttingDown) return;
 
   shuttingDown = true;
-
   log('WARN', 'Shutdown started', signal);
 
   for (const account of accounts.values()) {
